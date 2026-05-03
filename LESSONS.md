@@ -451,7 +451,24 @@ HTTP-01 doesn't work for wildcards. We use Caddy's `caddy-dns/duckdns` plugin (c
 
 The first cert acquisition takes 30-60 s; readiness probes against `https://${DOMAIN}/` will get connection-refused or SSL-handshake errors during that window. `wait_until_ready` catches `SSLError` alongside the connection errors so this isn't fatal.
 
-duckdns supports only one TXT record value per subdomain at a time. Caddy issues separate certs for the apex block and the wildcard block, so the two ACME DNS-01 challenges run sequentially — the plugin clears the TXT between them. We've seen one transient "TXT did not propagate" retry in the wild but it self-recovers within ~30 s.
+duckdns supports only one TXT record value per subdomain at a time. **Solution: combine apex + wildcard into one site block** (`${DOMAIN}, *.${DOMAIN} { ... }`) so Caddy issues a single SAN certificate covering both. The earlier two-block design caused two parallel ACME challenges that overwrote each other's TXT records:
+
+```
+challenge failed: Incorrect TXT record "" found at _acme-challenge.xaicoder.duckdns.org
+```
+
+Caddy serializes challenges within a single cert internally, so one SAN cert is reliable. Bonus: halves the LE rate-limit footprint (5 duplicate certs/week per identifier-set), since each launch only requests one cert instead of two.
+
+### Let's Encrypt's "5 duplicate certs/week" rate limit will bite during dev
+
+For a fixed set of identifiers (e.g. `xaicoder.duckdns.org` + `*.xaicoder.duckdns.org`), LE's `duplicate certificate` rate limit is 5/week. Spinning up + tearing down test launches 4-5 times in a day will hit it, then LE blocks you for the rest of the rolling 168-hour window:
+
+```
+HTTP 429: too many certificates (5) already issued for this exact set of identifiers
+in the last 168h0m0s, retry after <three days from now>
+```
+
+Caddy falls back to ZeroSSL automatically (different CA, different limit), but only if ZeroSSL's DNS-01 also goes through cleanly — and we've seen that fail in turn from the propagation race above. The combined-SAN-cert change cuts the limit-burn rate in half. For real heavy iteration, set `acme_ca` to a private/staging CA so LE's prod limit is never touched.
 
 ### VS Code Ports tab strips non-standard port from VSCODE_PROXY_URI
 
