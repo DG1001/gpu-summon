@@ -90,7 +90,17 @@ caddy run --config /etc/caddy/Caddyfile --adapter caddyfile \
     > /var/log/caddy.log 2>&1 &
 disown || true
 
-# 4) Write opencode config for in-container use AS SOON AS llama-server is
+# 4) Render AGENTS.md so any AI coding agent that opens /workspace/projects
+#    sees the dev environment. The host-port suffix isn't visible from
+#    inside the container -- summon.py SSHes in after readiness and patches
+#    the placeholder via sed (or leaves it for the user to replace).
+log "rendering /workspace/projects/AGENTS.md"
+DOMAIN="$DOMAIN" LLAMA_MODEL="$LLAMA_MODEL" \
+    envsubst '${DOMAIN} ${LLAMA_MODEL}' \
+    < /opt/AGENTS.md.template > /workspace/projects/AGENTS.md
+chown coder:coder /workspace/projects/AGENTS.md
+
+# 5) Write opencode config for in-container use AS SOON AS llama-server is
 #    ready. Background loop so we don't block onstart on the 5-15min model
 #    download. Once written, the user can open a terminal in code-server
 #    and just type `opencode`. baseURL points at localhost (no Caddy

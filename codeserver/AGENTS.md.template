@@ -1,0 +1,92 @@
+# Environment for AI coding agents
+
+You are running inside [code-server](https://github.com/coder/code-server)
+on a self-hosted [gpu-summon](https://github.com/dg1001/gpu-summon) box
+(GPU rented from vast.ai). This file describes the environment so you can
+make smart decisions about where to run things.
+
+## Who you are
+
+- Linux user: `coder` (passwordless `sudo` available — use sparingly)
+- Default shell: bash
+- Project root: `/workspace/projects` (you are likely already there)
+- HF model cache: `/workspace/hf_cache` (read-only for normal use)
+
+## Local LLM
+
+A `llama-server` is running on this same box, GPU-backed. From here you
+talk to it directly over loopback — no TLS, no internet hop:
+
+- Endpoint: `http://localhost:8080/v1` (OpenAI-compatible)
+- Bearer token: stored in opencode's auth file (see below)
+- Model loaded: `${LLAMA_MODEL}`
+
+`opencode` is pre-installed and pre-configured. From any terminal:
+
+```bash
+opencode
+```
+
+It already knows how to reach the local LLM. No further setup needed.
+
+If you need to call the LLM from a script:
+
+```bash
+curl -H "Authorization: Bearer $(jq -r '.[\"local-llamacpp\"].key' \
+        ~/.local/share/opencode/auth.json)" \
+     http://localhost:8080/v1/chat/completions \
+     -H "Content-Type: application/json" \
+     -d '{"model": "MODEL_ID_FROM_/v1/models", "messages": [...]}'
+```
+
+## Web apps you start in a terminal
+
+If you start a dev server (Flask, Vite, FastAPI, etc.), bind it to
+`0.0.0.0:<port>` (or `127.0.0.1:<port>`) and it becomes publicly
+reachable at:
+
+```
+https://<port>-${DOMAIN}<HOST_PORT_SUFFIX>/
+```
+
+Examples (replace `<port>` with whatever you bound to):
+
+- Flask `app.run(port=5000)` → `https://5000-${DOMAIN}<HOST_PORT_SUFFIX>/`
+- Vite (default 5173) → `https://5173-${DOMAIN}<HOST_PORT_SUFFIX>/`
+- FastAPI uvicorn `:8000` → `https://8000-${DOMAIN}<HOST_PORT_SUFFIX>/`
+
+This **subdomain-per-port** pattern (rather than path-based proxying like
+code-server's built-in `/proxy/<port>/`) means relative URLs in your app's
+HTML/JS stay correct — links to `/api/foo`, `<form action="/submit">`, etc.
+all resolve naturally.
+
+**Avoid** `https://...${DOMAIN}<HOST_PORT_SUFFIX>/proxy/<port>/` — every
+relative URL inside the rendered page will break (it goes to code-server's
+root, not your app).
+
+## Ports already in use on this box
+
+| Port | Used by | Notes |
+|---|---|---|
+| 8080 | llama-server | don't use this for your apps |
+| 8443 | code-server | this is the IDE you're inside |
+| 80 / 443 | Caddy | reverse proxy, TLS, routing |
+
+Anything else (3000, 5000, 5173, 8000, 8888, ...) is yours.
+
+## Persistence
+
+This entire box is **ephemeral** — when the user runs `summon.py --destroy`,
+everything is gone. To keep work:
+
+- `git push` to a remote (GitHub etc.) before the user destroys
+- The launcher does NOT do automatic backups
+
+## When you're stuck
+
+- LLM not responding? `tail /var/log/llama-server.log` (sudo)
+- Port-forward not reaching your app? `tail /var/log/caddy.log` (sudo)
+- IDE is slow? `nvidia-smi` to confirm the LLM isn't pegging GPU 100%
+
+You generally have a fast GPU here, so feel free to run inference-heavy
+agentic loops via `opencode` without worrying about latency.

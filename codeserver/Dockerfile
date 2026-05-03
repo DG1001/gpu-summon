@@ -77,6 +77,7 @@ ENV HF_HOME=/workspace/hf_cache
 # envsubst with the env vars summon.py injects.
 COPY onstart.sh           /opt/onstart.sh
 COPY Caddyfile.template   /opt/Caddyfile.template
+COPY AGENTS.md.template   /opt/AGENTS.md.template
 RUN chmod +x /opt/onstart.sh
 
 EXPOSE 22 80 443 8080

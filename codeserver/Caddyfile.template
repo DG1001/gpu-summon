@@ -25,12 +25,22 @@ ${DOMAIN} {
     }
 }
 
-# Subdomains. Right now only `llm.${DOMAIN}` is in use, but the wildcard
-# cert covers everything else for free in case we add features later.
+# Subdomains:
+#   - llm.${DOMAIN}            -> llama-server :8080
+#   - <port>-${DOMAIN}         -> port-forward to 127.0.0.1:<port>
+#                                 (use this for Flask/React/etc. running
+#                                 in code-server's terminal -- relative
+#                                 URLs in your app's HTML stay correct,
+#                                 unlike code-server's /proxy/<port>/)
 *.${DOMAIN} {
     @llm host llm.${DOMAIN}
     handle @llm {
         reverse_proxy 127.0.0.1:8080
+    }
+
+    @portfwd host_regexp portfwd ^([0-9]+)-${DOMAIN}$
+    handle @portfwd {
+        reverse_proxy 127.0.0.1:{re.portfwd.1}
     }
 
     handle {

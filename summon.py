@@ -1156,6 +1156,43 @@ def cmd_launch(args, vast: VastAI) -> None:
                               code_domain=code_domain,
                               code_port=(port if args.with_codeserver else None))
 
+    # Bei --with-codeserver: AGENTS.md auf der Box hat ein
+    # <HOST_PORT_SUFFIX>-Placeholder den wir jetzt mit dem echten Port
+    # ersetzen. Geht via SSH (Smoketest-Key wird wiederverwendet bzw.
+    # angelegt). Best-Effort - bei SSH-Failure printen wir einen Hinweis
+    # statt zu crashen.
+    if args.with_codeserver:
+        port_suffix = "" if port == 443 else f":{port}"
+        ssh_port_for_inst = get_ssh_port(inst)
+        if ssh_port_for_inst:
+            try:
+                pub, priv = ensure_smoketest_keypair()
+                r = vast.attach_ssh(instance_id=instance_id, ssh_key=pub)
+                if isinstance(r, str):
+                    r = json.loads(r)
+                # already-attached ist auch OK, nur kompletter Failure ist schlimm
+                sed_cmd = (f"sed -i 's|<HOST_PORT_SUFFIX>|{port_suffix}|g' "
+                           f"/workspace/projects/AGENTS.md")
+                subprocess.run([
+                    "ssh",
+                    "-i", priv,
+                    "-o", "StrictHostKeyChecking=no",
+                    "-o", "UserKnownHostsFile=/dev/null",
+                    "-o", "LogLevel=ERROR",
+                    "-o", "ConnectTimeout=8",
+                    "-p", str(ssh_port_for_inst),
+                    f"root@{ip}",
+                    sed_cmd,
+                ], check=False, timeout=20, capture_output=True)
+                print(f"[code]   AGENTS.md auf host_port='{port_suffix}' "
+                      f"angepasst.")
+            except Exception as e:
+                print(f"[code]   WARN: konnte AGENTS.md nicht patchen: {e}")
+                if port != 443:
+                    print("[code]   Manuell im Browser-Terminal:")
+                    print(f"      sudo sed -i 's|<HOST_PORT_SUFFIX>|:{port}|g' "
+                          "/workspace/projects/AGENTS.md")
+
     print("\n" + "="*60)
     if args.with_codeserver:
         port_suffix = "" if port == 443 else f":{port}"
