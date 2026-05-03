@@ -459,7 +459,11 @@ duckdns supports only one TXT record value per subdomain at a time. Caddy issues
 
 ### Port 443 conflicts on the vast host
 
-Vast.ai instances are containers; mapping `-p 443:443` only works if the underlying host has port 443 free. Most do, some don't. Symptom: `create_instance` succeeds but `wait_until_running` returns ports without 443/tcp. There's no way to query host port-availability via the SDK, so this is reactive: if 443 is missing, destroy + retry.
+Vast.ai instances are containers; mapping `-p 443:443` only works if the underlying host has port 443 free. Most don't — vast hosts often run their own service (web management or SSH proxy) on 443. The container's port 443 then gets mapped to a random host port like 44140, which is NOT the same as failing.
+
+Symptom: `wait_until_running` reports `'443/tcp'` in the port set, but `inst['ports']['443/tcp'][0]['HostPort']` is some random number. `https://${DOMAIN}/` (default port 443) lands on vast's own service, not your Caddy. `https://${DOMAIN}:44140/` works but is ugly.
+
+The launcher handles this in `cmd_launch` for `--with-codeserver`: try `PORT_443_RETRY_LIMIT=3` offers; if none gives host_port=443, accept the random port and bake `:PORT` into all user-facing URLs (FERTIG output, opencode config, readiness probes). Same pattern as `--min-real-mbps` retry. The same applies to ports 80 and 8080 — but they're less user-facing so we don't gate on them.
 
 ### Disk math for `--with-codeserver`
 

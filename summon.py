@@ -627,7 +627,8 @@ def smoketest_hf_bandwidth(vast: VastAI, instance_id: int,
 def write_opencode_config(host: str, port: int, model: str, backend: str,
                            api_key: str = "",
                            config_dir: Path | None = None,
-                           code_domain: str | None = None) -> Path:
+                           code_domain: str | None = None,
+                           code_port: int | None = None) -> Path:
     """Schreibt opencode.json + auth.json fuer das remote Setup.
 
     api_key: das Bearer-Token das llama-server erwartet. Leer = kein Auth
@@ -636,6 +637,8 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
     code_domain: bei --with-codeserver (z.B. 'mybox.duckdns.org') wird
     der baseURL auf https://llm.{domain}/v1 gesetzt statt auf bare-IP -
     nutzt das Caddy-TLS und versteckt die wechselnde vast-IP.
+    code_port: tatsaechlicher Host-Port fuer Container-443. 443 = wird
+    weggelassen (saubere URL); Random-Port = wird als ":PORT" eingebaut.
     """
     if config_dir is None:
         config_dir = Path.home() / ".config" / "opencode"
@@ -645,7 +648,8 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
 
     api_path = BACKENDS[backend]["api_path"]
     if code_domain:
-        base_url = f"https://llm.{code_domain}{api_path}"
+        port_suffix = "" if code_port in (None, 443) else f":{code_port}"
+        base_url = f"https://llm.{code_domain}{port_suffix}{api_path}"
         display_host = code_domain
     else:
         base_url = f"http://{host}:{port}{api_path}"
@@ -716,6 +720,12 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
 # -----------------------------------------------------------------------------
 
 DUCKDNS_UPDATE_URL = "https://www.duckdns.org/update"
+
+# Wieviele Offers wir maximal verbrennen wollen um den Standard-Port 443 zu
+# kriegen, bevor wir uns mit einem Random-Host-Port zufrieden geben (URLs
+# bekommen dann ":<port>" mitgeschrieben). 3 = pragmatisch, kostet im worst
+# case ~$0.04 (Container-up + sofort destroy ist sub-minute).
+PORT_443_RETRY_LIMIT = 3
 
 
 def update_duckdns(subdomain: str, token: str, ip: str | None = None) -> bool:
@@ -1007,6 +1017,7 @@ def cmd_launch(args, vast: VastAI) -> None:
     instance_id = None
     inst = None
     chosen_offer = None
+    port_443_misses = 0  # zaehlt Offers wo der vast-Host 443 belegt hatte
 
     for attempt, offer in enumerate(offers, 1):
         print(f"\n[try]   Versuch {attempt}/{len(offers)}: "
@@ -1039,6 +1050,35 @@ def cmd_launch(args, vast: VastAI) -> None:
                 pass
             instance_id = None
             continue
+
+        # Bei --with-codeserver: Vast.ai mappt -p 443:443 nur dann auf Host-
+        # Port 443 wenn der vast-Host das nicht selbst belegt. Wenn nicht,
+        # kriegen wir einen Random-Port wie 44140 - dann landet
+        # https://${DOMAIN}/ (ohne Port) auf vasts Service, NICHT bei Caddy.
+        # Strategie: bis zu PORT_443_RETRY_LIMIT Offers verbrennen um 443
+        # zu kriegen; danach Random-Port akzeptieren und :PORT in URLs
+        # einbauen.
+        if args.with_codeserver:
+            _, host_port = get_endpoint(inst, args.backend)
+            if host_port != 443:
+                port_443_misses += 1
+                if (port_443_misses < PORT_443_RETRY_LIMIT and
+                        attempt < len(offers)):
+                    print(f"[code]   vast-Host hat Port 443 belegt "
+                          f"(zugewiesen: host_port={host_port}). Probiere "
+                          f"naechsten Offer ({port_443_misses}/"
+                          f"{PORT_443_RETRY_LIMIT})...")
+                    try:
+                        vast.destroy_instance(id=instance_id)
+                    except Exception:
+                        pass
+                    instance_id = None
+                    continue
+                else:
+                    print(f"[code]   WARN: kein Offer mit freiem 443 in "
+                          f"Top-{len(offers)} gefunden. Akzeptiere "
+                          f"host_port={host_port} - URLs enthalten den "
+                          f"Port (z.B. https://{code_domain}:{host_port}).")
 
         if args.min_real_mbps > 0:
             ip, _port = get_endpoint(inst, args.backend)
@@ -1074,6 +1114,13 @@ def cmd_launch(args, vast: VastAI) -> None:
         print(f"\n[ready] Instance laeuft auf {ip}:{port}")
 
         if args.with_codeserver:
+            # Tatsaechlicher Host-Port der auf Container-443 mapped: 443
+            # wenn der vast-Host Glueck hatte, sonst Random. Wir bauen alle
+            # User-Facing-URLs mit ggf. ":PORT" Suffix.
+            port_suffix = "" if port == 443 else f":{port}"
+            ide_url = f"https://{code_domain}{port_suffix}"
+            llm_url_base = f"https://llm.{code_domain}{port_suffix}"
+
             # duckdns-A-Record auf die neue vast-IP setzen, BEVOR Caddy
             # eine ACME DNS-01 Challenge versucht (sonst schlaegt der erste
             # Cert-Versuch fehl). Der TXT-Record kommt von Caddy selbst -
@@ -1085,12 +1132,12 @@ def cmd_launch(args, vast: VastAI) -> None:
                       "Caddy ACME-Cert wird vermutlich nicht gehen.")
 
             print("[ready] Warte auf llama-server (5-15 Min Modell-Download)...")
-            llm_url = f"https://llm.{code_domain}{backend_cfg['api_path']}/models"
+            llm_url = f"{llm_url_base}{backend_cfg['api_path']}/models"
             llm_headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
             wait_until_ready(llm_url, headers=llm_headers,
                              timeout_sec=args.model_timeout, label="llm")
             print("[ready] Warte auf code-server (Caddy-ACME + Login-Page)...")
-            wait_until_ready(f"https://{code_domain}/",
+            wait_until_ready(f"{ide_url}/",
                              timeout_sec=300, label="code")
         else:
             url = backend_cfg["ready_check"].format(host=ip, port=port)
@@ -1103,26 +1150,36 @@ def cmd_launch(args, vast: VastAI) -> None:
         sys.exit(2)
 
     if args.write_config:
+        # Bei codeserver-Mode pass auch den host_port so dass die
+        # opencode-Config den richtigen URL-Port enthaelt (falls != 443).
         write_opencode_config(ip, port, model, args.backend, api_key=api_key,
-                              code_domain=code_domain)
+                              code_domain=code_domain,
+                              code_port=(port if args.with_codeserver else None))
 
     print("\n" + "="*60)
     if args.with_codeserver:
+        port_suffix = "" if port == 443 else f":{port}"
+        ide_url = f"https://{code_domain}{port_suffix}"
+        llm_url_base = f"https://llm.{code_domain}{port_suffix}"
         print("FERTIG. AI-Dev-Umgebung laeuft.")
         print()
-        print(f"  Browser-IDE:   https://{code_domain}")
-        print(f"  LLM-Endpoint:  https://llm.{code_domain}{backend_cfg['api_path']}")
+        print(f"  Browser-IDE:   {ide_url}")
+        print(f"  LLM-Endpoint:  {llm_url_base}{backend_cfg['api_path']}")
         if api_key:
             print(f"  LLM-Bearer:    {api_key}")
         print(f"  IDE-Login:     {code_password}   (code-server password)")
+        if port != 443:
+            print()
+            print(f"  HINWEIS: vast-Host hat 443 belegt, nutzen Port {port}. "
+                  f"Bookmark mit ':{port}' speichern.")
         print()
         print("Test:")
         if api_key:
             print(f"  curl -H 'Authorization: Bearer {api_key}' \\")
-            print(f"       https://llm.{code_domain}{backend_cfg['api_path']}/models")
-        print(f"  Browser: https://{code_domain}")
+            print(f"       {llm_url_base}{backend_cfg['api_path']}/models")
+        print(f"  Browser: {ide_url}")
         print()
-        print("opencode starten (Config zeigt auf https://llm.{...} mit TLS):")
+        print("opencode starten (Config zeigt auf den TLS-Endpoint):")
         print("  opencode")
     else:
         print("FERTIG. Endpoint:")
