@@ -31,6 +31,9 @@ export VAST_API_KEY=...   # from https://cloud.vast.ai/manage-keys/
 # Solo coding session: 64k context per user, secure-by-default
 python summon.py --solo-mode
 
+# Inspect a running instance (model download progress, server logs, ...)
+python summon.py --ssh <id>
+
 # When done
 python summon.py --list
 python summon.py --destroy <id>
@@ -50,7 +53,7 @@ The launch prints the endpoint URL + API key and writes `~/.config/opencode/open
 - Cost guards: `--max-price`, `--max-inet-cost`, `--min-inet-down`, `--min-reliability`
 - Vast.ai Template support (`--template-hash`) for reusable launch configs
 - Diagnostic mode (`--debug`) showing exactly which filter eliminates results
-- Convenience: `--list`, `--destroy ID`, `--dry-run`
+- Convenience: `--list`, `--destroy ID`, `--ssh ID` (interactive shell into a running instance), `--dry-run`
 
 ## Requirements
 
@@ -168,6 +171,7 @@ Numbers from vast.ai (April 2026); other providers have similar order of magnitu
 
 --list                         list active instances
 --destroy ID                   destroy instance
+--ssh ID                       SSH into a running instance (auto-attaches a keypair)
 --debug                        diagnose offer-search filter chain
 ```
 

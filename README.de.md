@@ -31,6 +31,9 @@ export VAST_API_KEY=...   # von https://cloud.vast.ai/manage-keys/
 # Solo-Coding: 64k Context pro User, secure-by-default
 python summon.py --solo-mode
 
+# In eine laufende Instanz reinschauen (Modell-Download-Fortschritt, Logs, ...)
+python summon.py --ssh <id>
+
 # Wenn fertig
 python summon.py --list
 python summon.py --destroy <id>
@@ -50,7 +53,7 @@ Der Launch druckt Endpoint + API-Key und schreibt `~/.config/opencode/opencode.j
 - Kosten-Guards: `--max-price`, `--max-inet-cost`, `--min-inet-down`, `--min-reliability`
 - Vast.ai-Template-Support (`--template-hash`) fuer wiederverwendbare Setups
 - Diagnose-Modus (`--debug`) zeigt genau welcher Filter die Treffer auf 0 zieht
-- Convenience: `--list`, `--destroy ID`, `--dry-run`
+- Convenience: `--list`, `--destroy ID`, `--ssh ID` (interaktive Shell auf eine laufende Instanz), `--dry-run`
 
 ## Voraussetzungen
 
@@ -168,6 +171,7 @@ Zahlen von vast.ai (April 2026); andere Anbieter haben aehnliche Groessenordnung
 
 --list                         aktive Instanzen listen
 --destroy ID                   Instanz zerstoeren
+--ssh ID                       SSH in eine laufende Instanz (Key wird auto-attached)
 --debug                        Filter-Chain der Offer-Suche analysieren
 ```
 
