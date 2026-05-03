@@ -33,6 +33,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         rsync tmux software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
+# Non-root user for the IDE side. code-server runs as `coder`, so any
+# terminal opened in the browser-IDE lands as `coder`. Passwordless sudo
+# for typical dev workflows (apt install, system tweaks). UID 1000 matches
+# the default for code-server's deb package, so files created in the IDE
+# are owned consistently.
+RUN useradd -u 1000 -m -s /bin/bash coder \
+    && echo 'coder ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/coder \
+    && chmod 0440 /etc/sudoers.d/coder
+
 # Caddy with the duckdns DNS-01 plugin baked in, fetched as a static binary
 # from the official Caddy build service (xcaddy under the hood).
 RUN curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com%2Fcaddy-dns%2Fduckdns" \

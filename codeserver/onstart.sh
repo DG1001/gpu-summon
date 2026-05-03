@@ -41,6 +41,8 @@ require LLAMA_API_KEY
 require CODESERVER_PASSWORD
 
 mkdir -p /var/log /etc/caddy /workspace/hf_cache /workspace/projects
+# /workspace/projects gehoert dem coder-User (code-server laeuft als coder).
+chown -R coder:coder /workspace/projects 2>/dev/null || true
 
 # 1) llama-server. Same flags as the standalone llamacpp backend.
 #    --host 127.0.0.1 because Caddy fronts it on the public side.
@@ -63,9 +65,10 @@ disown || true
 
 # 2) code-server. PASSWORD env enables the built-in login form. Bind to
 #    127.0.0.1 so only Caddy can reach it. /workspace/projects is the
-#    default project directory the user lands in.
-log "starting code-server (PASSWORD=set, bind 127.0.0.1:8443)"
-PASSWORD="$CODESERVER_PASSWORD" setsid nohup code-server \
+#    default project directory the user lands in. Runs as `coder` so the
+#    browser terminal isn't root (sudo without password if needed).
+log "starting code-server as coder (PASSWORD=set, bind 127.0.0.1:8443)"
+sudo -u coder env PASSWORD="$CODESERVER_PASSWORD" setsid nohup code-server \
     --bind-addr 127.0.0.1:8443 \
     --auth password \
     --disable-telemetry \
@@ -110,9 +113,11 @@ disown || true
     rm -f /tmp/models.json
 
     log "[opencode-cfg] writing config (model=$MODEL_ID)"
-    mkdir -p /root/.config/opencode /root/.local/share/opencode
+    # Config-Dateien fuer den coder-User schreiben (code-server-Terminal
+    # landet als coder), Ownership korrigieren.
+    mkdir -p /home/coder/.config/opencode /home/coder/.local/share/opencode
 
-    cat > /root/.config/opencode/opencode.json <<JSON
+    cat > /home/coder/.config/opencode/opencode.json <<JSON
 {
   "\$schema": "https://opencode.ai/config.json",
   "provider": {
@@ -128,11 +133,13 @@ disown || true
 }
 JSON
 
-    cat > /root/.local/share/opencode/auth.json <<JSON
+    cat > /home/coder/.local/share/opencode/auth.json <<JSON
 {
   "local-llamacpp": {"type": "api", "key": "$LLAMA_API_KEY"}
 }
 JSON
+
+    chown -R coder:coder /home/coder/.config /home/coder/.local
 
     log "[opencode-cfg] done. type 'opencode' in code-server terminal."
 ) &
