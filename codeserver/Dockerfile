@@ -42,6 +42,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+# Node.js LTS (current 22.x). Noble's apt only has Node 18.x which is
+# already on EOL countdown -- NodeSource provides a current LTS that
+# integrates cleanly via apt. npm comes bundled.
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && node --version && npm --version
+
 # Non-root user for the IDE side. code-server runs as `coder`, so any
 # terminal opened in the browser-IDE lands as `coder` (passwordless sudo
 # for typical dev workflows: apt install, system tweaks).
