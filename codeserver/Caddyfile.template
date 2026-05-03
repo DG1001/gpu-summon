@@ -5,50 +5,58 @@
 #   ${DUCKDNS_TOKEN}  duckdns API token (used for ACME DNS-01)
 #   ${ACME_EMAIL}     contact email for Let's Encrypt
 #
-# Auth model:
-#   - Apex: code-server's own login page (PASSWORD env). No Caddy basicauth.
-#   - llm subdomain: llama-server's Bearer-token. No Caddy basicauth (would
-#     force opencode to send two credentials).
+# Single wildcard cert for *.${DOMAIN} covers ALL three URL patterns we
+# expose:
+#   - code.${DOMAIN}   IDE (code-server)
+#   - llm.${DOMAIN}    llama-server
+#   - <port>.${DOMAIN} per-app port forwarding
 #
-# Single combined site block for apex + wildcard. This is intentional:
-# duckdns can only hold ONE TXT record value at _acme-challenge.${DOMAIN}.
-# With separate site blocks, Caddy fired two parallel ACME challenges that
-# overwrote each other's TXT records ("Incorrect TXT record \"\" found").
-# One combined SAN cert = one ACME challenge per renewal = no race.
-# Bonus: halves our LE rate-limit footprint (one cert/launch instead of two).
+# We deliberately do NOT use the apex (${DOMAIN} without subdomain prefix)
+# because:
+#   1. apex needs its own cert (wildcard *.foo doesn't cover foo)
+#   2. duckdns can only hold ONE TXT record per name -- two parallel ACME
+#      DNS-01 challenges for apex + wildcard race and overwrite each
+#      other ("Incorrect TXT record \"\" found"), making the launch flaky
+#   3. each cert counts against LE's "5 duplicate certs/week" limit. With
+#      one cert we get 5 launches per rolling 168h before LE blocks us;
+#      with two we got 2.5
+#
+# Auth model:
+#   - code.${DOMAIN}: code-server's own login page (PASSWORD env)
+#   - llm.${DOMAIN}: llama-server's Bearer-token (don't add basicauth on
+#     top -- would force opencode to send two credentials)
 
 {
     email ${ACME_EMAIL}
 }
 
-# Combined apex + wildcard SAN cert. Routes are dispatched by host matchers
-# inside the block so apex/llm/port-forward go to the right upstream.
+# Single wildcard site block. All routes dispatched by host matcher.
 #
 # propagation_timeout -1 disables Caddy's self-check that the TXT record
 # has propagated (the check tries TCP/53 to duckdns' authoritative NS,
-# which vast.ai hosts often firewall). propagation_delay 60s waits a fixed
-# block instead, then asks the ACME server to validate. duckdns is fast
-# enough that 60s is comfortable.
-${DOMAIN}, *.${DOMAIN} {
+# which vast.ai hosts often firewall). propagation_delay 60s waits a
+# fixed block instead, then asks the ACME server to validate. duckdns is
+# fast enough that 60s is comfortable.
+*.${DOMAIN} {
     tls {
         dns duckdns ${DUCKDNS_TOKEN}
         propagation_delay 60s
         propagation_timeout -1
     }
 
-    # Apex: code-server. Caddy's reverse_proxy already forwards
-    # X-Forwarded-* headers correctly by default; we only override Host so
-    # code-server sees the original (Caddy otherwise rewrites Host to the
-    # upstream's address).
-    @apex host ${DOMAIN}
-    handle @apex {
+    # code.${DOMAIN} -> code-server :8443 (IDE).
+    # We override Host so code-server sees the original hostname (Caddy
+    # otherwise rewrites Host to the upstream's address). X-Real-IP/
+    # X-Forwarded-* are forwarded by reverse_proxy by default.
+    @code host code.${DOMAIN}
+    handle @code {
         reverse_proxy 127.0.0.1:8443 {
             header_up Host {host}
             header_up X-Real-IP {remote_host}
         }
     }
 
-    # llm.${DOMAIN} -> llama-server :8080 (Bearer-token auth at app level)
+    # llm.${DOMAIN} -> llama-server :8080 (Bearer-token at app level)
     @llm host llm.${DOMAIN}
     handle @llm {
         reverse_proxy 127.0.0.1:8080

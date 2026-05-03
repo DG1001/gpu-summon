@@ -451,13 +451,15 @@ HTTP-01 doesn't work for wildcards. We use Caddy's `caddy-dns/duckdns` plugin (c
 
 The first cert acquisition takes 30-60 s; readiness probes against `https://${DOMAIN}/` will get connection-refused or SSL-handshake errors during that window. `wait_until_ready` catches `SSLError` alongside the connection errors so this isn't fatal.
 
-duckdns supports only one TXT record value per subdomain at a time. **Solution: combine apex + wildcard into one site block** (`${DOMAIN}, *.${DOMAIN} { ... }`) so Caddy issues a single SAN certificate covering both. The earlier two-block design caused two parallel ACME challenges that overwrote each other's TXT records:
+duckdns supports only one TXT record value per subdomain at a time. **Solution that actually works: drop the apex entirely**, use `code.${DOMAIN}` for the IDE alongside `llm.${DOMAIN}` and `<port>.${DOMAIN}`. All three are third-level under `${DOMAIN}`, all covered by a single `*.${DOMAIN}` wildcard cert. One cert per launch, no race.
+
+The earlier "combine into a SAN cert" attempt (`${DOMAIN}, *.${DOMAIN} { ... }`) didn't work — Caddy/CertMagic still issued two separate certs (one for apex, one for wildcard) because their identifier names differ. Two ACME challenges run concurrently, write to the same `_acme-challenge.${DOMAIN}` TXT, and overwrite each other:
 
 ```
 challenge failed: Incorrect TXT record "" found at _acme-challenge.xaicoder.duckdns.org
 ```
 
-Caddy serializes challenges within a single cert internally, so one SAN cert is reliable. Bonus: halves the LE rate-limit footprint (5 duplicate certs/week per identifier-set), since each launch only requests one cert instead of two.
+The wildcard-only design avoids this entirely. Caddy serializes within one cert; nothing else writes to the TXT.
 
 ### Let's Encrypt's "5 duplicate certs/week" rate limit will bite during dev
 

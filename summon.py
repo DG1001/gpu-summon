@@ -1162,7 +1162,7 @@ def cmd_launch(args, vast: VastAI) -> None:
             # wenn der vast-Host Glueck hatte, sonst Random. Wir bauen alle
             # User-Facing-URLs mit ggf. ":PORT" Suffix.
             port_suffix = "" if port == 443 else f":{port}"
-            ide_url = f"https://{code_domain}{port_suffix}"
+            ide_url = f"https://code.{code_domain}{port_suffix}"
             llm_url_base = f"https://llm.{code_domain}{port_suffix}"
 
             # duckdns-A-Record auf die neue vast-IP setzen, BEVOR Caddy
@@ -1246,7 +1246,7 @@ def cmd_launch(args, vast: VastAI) -> None:
     print("\n" + "="*60)
     if args.with_codeserver:
         port_suffix = "" if port == 443 else f":{port}"
-        ide_url = f"https://{code_domain}{port_suffix}"
+        ide_url = f"https://code.{code_domain}{port_suffix}"
         llm_url_base = f"https://llm.{code_domain}{port_suffix}"
         print("FERTIG. AI-Dev-Umgebung laeuft.")
         print()

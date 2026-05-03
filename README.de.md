@@ -262,8 +262,10 @@ export VAST_API_KEY=...
 
 # llama-server + code-server + Caddy auf einer gemieteten GPU
 python summon.py --with-codeserver --code-domain mybox --solo-mode
-# → Browser-IDE:   https://mybox.duckdns.org      (Login: <pw wird gedruckt>)
+# → Browser-IDE:   https://code.mybox.duckdns.org   (Login: <pw wird gedruckt>)
 # → LLM-Endpoint:  https://llm.mybox.duckdns.org/v1   (Bearer: <key wird gedruckt>)
+# (Hinweis: vast.ai vergibt immer einen Random-Host-Port -- der Launcher
+#  druckt die finalen URLs mit ":<port>" Suffix beim FERTIG)
 
 # Aufraeumen (zerstoert Instanz UND raeumt den duckdns-A-Record auf)
 python summon.py --destroy <id> --duckdns-token $DUCKDNS_TOKEN

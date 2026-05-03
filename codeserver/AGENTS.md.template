@@ -64,7 +64,7 @@ code-server's built-in `/proxy/<port>/`) means relative URLs in your app's
 HTML/JS stay correct — links to `/api/foo`, `<form action="/submit">`, etc.
 all resolve naturally.
 
-**Avoid** `https://${DOMAIN}<HOST_PORT_SUFFIX>/proxy/<port>/` (the URL
+**Avoid** `https://code.${DOMAIN}<HOST_PORT_SUFFIX>/proxy/<port>/` (the URL
 code-server's "Open in Browser" button suggests for a forwarded port) —
 every relative URL inside the rendered page will break (it goes to
 code-server's root, not your app). Type the dot-subdomain URL above
