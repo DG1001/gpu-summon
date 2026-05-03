@@ -1155,8 +1155,14 @@ def cmd_launch(args, vast: VastAI) -> None:
                 if isinstance(r, str):
                     r = json.loads(r)
                 # already-attached ist auch OK, nur kompletter Failure ist schlimm
-                sed_cmd = (f"sed -i 's|<HOST_PORT_SUFFIX>|{port_suffix}|g' "
-                           f"/workspace/projects/AGENTS.md")
+                # Two SSH-side fixups: AGENTS.md placeholder + restart
+                # code-server with the real VSCODE_PROXY_URI (so the Ports
+                # tab in VS Code shows usable subdomain URLs incl. port).
+                fixup_cmd = (
+                    f"sed -i 's|<HOST_PORT_SUFFIX>|{port_suffix}|g' "
+                    f"/workspace/projects/AGENTS.md && "
+                    f"/opt/restart-codeserver.sh {port}"
+                )
                 subprocess.run([
                     "ssh",
                     "-i", priv,
@@ -1166,10 +1172,10 @@ def cmd_launch(args, vast: VastAI) -> None:
                     "-o", "ConnectTimeout=8",
                     "-p", str(ssh_port_for_inst),
                     f"root@{ip}",
-                    sed_cmd,
-                ], check=False, timeout=20, capture_output=True)
-                print(f"[code]   AGENTS.md auf host_port='{port_suffix}' "
-                      f"angepasst.")
+                    fixup_cmd,
+                ], check=False, timeout=30, capture_output=True)
+                print(f"[code]   AGENTS.md + code-server VSCODE_PROXY_URI "
+                      f"auf host_port={port} gesetzt.")
             except Exception as e:
                 print(f"[code]   WARN: konnte AGENTS.md nicht patchen: {e}")
                 if port != 443:

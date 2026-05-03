@@ -72,14 +72,49 @@ log "starting code-server as coder (PASSWORD=set, bind 127.0.0.1:8443)"
 # upstream image, so HOME stays /root and code-server tries to mkdir
 # /root/.config/code-server (EACCES, instant crash). Setting HOME via env
 # bypasses sudo's env_keep policy and points code-server at /home/coder.
+#
+# --proxy-domain tells code-server its public hostname so it knows when to
+# enable proxy-mode (forwarded ports get pretty subdomain URLs in the Ports
+# tab instead of the path-based /proxy/<port>/). VSCODE_PROXY_URI is the
+# template VS Code uses to render those URLs. Both need the host port that
+# vast assigned (random, e.g. :44145) -- but onstart.sh doesn't know that
+# port from inside the container. summon.py SSHes in post-launch and runs
+# /opt/restart-codeserver.sh <host_port> with the real port.
 sudo -u coder env HOME=/home/coder PASSWORD="$CODESERVER_PASSWORD" \
     setsid nohup code-server \
     --bind-addr 127.0.0.1:8443 \
     --auth password \
     --disable-telemetry \
+    --proxy-domain "$DOMAIN" \
     /workspace/projects \
     > /var/log/code-server.log 2>&1 < /dev/null &
 disown || true
+
+# Helper invoked by summon.py over SSH once the vast host port is known.
+# Restarts code-server with VSCODE_PROXY_URI baked at the right :PORT so
+# the Ports tab shows usable URLs.
+cat > /opt/restart-codeserver.sh <<'EOSH'
+#!/bin/bash
+# usage: /opt/restart-codeserver.sh <host_port_for_443>
+set -e
+HOST_PORT="${1:?missing host port arg}"
+# Read DOMAIN/CODESERVER_PASSWORD from PID 1 env (where vast set them).
+DOMAIN=$(grep -z '^DOMAIN=' /proc/1/environ | tr -d '\0' | cut -d= -f2-)
+PASSWORD=$(grep -z '^CODESERVER_PASSWORD=' /proc/1/environ | tr -d '\0' | cut -d= -f2-)
+[[ -n "$DOMAIN" && -n "$PASSWORD" ]] || { echo "missing env"; exit 1; }
+URI="https://{{port}}.${DOMAIN}:${HOST_PORT}/"
+pkill -f /usr/lib/code-server 2>/dev/null || true
+sleep 1
+sudo -u coder env HOME=/home/coder PASSWORD="$PASSWORD" VSCODE_PROXY_URI="$URI" \
+    setsid nohup code-server \
+    --bind-addr 127.0.0.1:8443 \
+    --auth password --disable-telemetry \
+    --proxy-domain "$DOMAIN" \
+    /workspace/projects > /var/log/code-server.log 2>&1 < /dev/null &
+disown || true
+echo "code-server restarted with VSCODE_PROXY_URI=$URI"
+EOSH
+chmod +x /opt/restart-codeserver.sh
 
 # 3) Caddy. Wildcard cert via duckdns DNS-01. Caddy retries cert acquisition
 #    on its own; if duckdns/LE hiccup, watch /var/log/caddy.log via SSH.
