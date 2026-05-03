@@ -31,6 +31,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         netcat-openbsd jq sudo vim \
         openssh-server openssh-client openssh-sftp-server \
         rsync tmux software-properties-common \
+        # Python dev essentials so users don't trip over the
+        # "ensurepip is not available" / "pip not found" combo on a fresh
+        # Ubuntu 24.04: pip3 itself, the venv module, and the dev headers
+        # that most pip-installable packages with C extensions need.
+        python3-pip python3-venv python3-dev \
+        # Build toolchain for npm packages with native deps and pip
+        # packages that need to compile (numpy/scipy via wheel are fine,
+        # but anything off the beaten path needs gcc + make).
+        build-essential pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user for the IDE side. code-server runs as `coder`, so any
