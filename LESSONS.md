@@ -18,6 +18,7 @@ Things we've learned the hard way running self-hosted Qwen3.6-27B on rented clou
 - [Manual llama-server restart](#manual-llama-server-restart)
 - [Cost reference](#cost-reference)
 - [vast.ai Templates](#vastai-templates)
+- [Full-Stack Mode (--with-xares)](#full-stack-mode-with-xares)
 
 ---
 
@@ -383,3 +384,68 @@ The launcher will use the template's image + onstart, and inject `LLAMA_PARALLEL
 
 - Template env doesn't merge with create-time env — you must pass `-p 8080:8080` and `HF_HOME` again on `create_instance`
 - Updating a template across SDK / API has different keyword names (see [vast.ai API quirks](#vastai-api-quirks))
+
+---
+
+## Full-Stack Mode (--with-xares)
+
+The `--with-xares` flow runs llama-server *and* xaresaicoder on the same rented box, fronted by Caddy with a duckdns wildcard cert. Things we learned:
+
+### DinD on vast.ai is reactive, not filterable
+
+Vast.ai offers don't expose a "supports privileged" flag. We can't preempt hosts that block `--privileged`; we just submit `runtype="ssh_direc ssh_proxy"` and watch the container. If `dockerd` fails to start, the container exits within ~30 s and the launcher destroys + tries the next offer (same retry pattern as `--min-real-mbps`).
+
+The `vfs` storage driver in our Dockerfile (`dockerd --storage-driver=vfs`) avoids needing kernel overlay2 features, which some vast hosts strip. It's slow but it works everywhere.
+
+### duckdns supports wildcards (undocumented but real)
+
+Any `*.<your-name>.duckdns.org` resolves to the same A record as `<your-name>.duckdns.org`. Not in their FAQ, but it works — verified empirically. This makes one duckdns subdomain enough for unlimited xares workspaces (`<uuid>.mybox.duckdns.org`).
+
+### Let's Encrypt wildcard cert needs DNS-01
+
+HTTP-01 doesn't work for wildcards. We use Caddy's `caddy-dns/duckdns` plugin (compiled into the binary in `xares/Dockerfile`). Caddy reads `DUCKDNS_TOKEN` from env and handles the TXT record dance automatically. Renewal is also automatic — no cron needed.
+
+The first cert acquisition takes 30-60 s; readiness probes against `https://${DOMAIN}/api/health` will get connection-refused or SSL-handshake errors during that window. `wait_until_ready` catches `SSLError` alongside the connection errors so this isn't fatal.
+
+### Public Suffix List == own rate limit bucket
+
+`duckdns.org` is on the [Public Suffix List](https://publicsuffix.org/list/), so each `*.duckdns.org` subdomain counts as its own "registered domain" for Let's Encrypt rate limiting (50 certs/week, 5 duplicate certs/week). You won't share quota with the rest of the duckdns user base.
+
+### bcrypt hashing happens client-side
+
+The Caddyfile expects `basicauth { user $2b$10$... }` with a real bcrypt hash. We compute it in `summon.py` via the `bcrypt` package and pass the hash as env (`XARES_BASIC_HASH`), so the cleartext password never lands on the rented box. The `$2b$` prefix is preserved as-is by `envsubst`'s whitelist mode (`-i` / passing only the var names you want substituted) — the literal `$` chars in the hash are not interpreted as substitution placeholders.
+
+### xares /api/health needs a BasicAuth bypass
+
+The Caddyfile exempts `path /api/health` from the basicauth challenge so summon.py's readiness probe (and any external uptime monitor) can hit it anonymously. Without this exemption every probe gets a 401 and the launcher would hang on "still not ready" until the model timeout.
+
+### Port 443 conflicts on the vast host
+
+Vast.ai instances are containers; mapping `-p 443:443` only works if the underlying host has port 443 free. Most do, some don't. Symptom: `create_instance` succeeds but `wait_until_running` returns ports without 443/tcp. There's no way to query host port-availability via the SDK, so this is also reactive: if 443 is missing, destroy + retry.
+
+### Disk math for the combined stack
+
+| Component | Size |
+|---|---|
+| Custom image (CUDA runtime + dockerd + caddy + llama.cpp) | ~6 GB |
+| Q5_K_XL model cache | ~22 GB |
+| xaresaicoder base images (code-server, nginx, server) | ~4 GB |
+| Per workspace (idle) | ~0.5 GB |
+| Per workspace (active dev w/ deps) | 2-5 GB |
+| **Floor for `--with-xares`** | **~100 GB disk** |
+
+The launcher auto-bumps `--disk` to 100 GB when `--with-xares` is set.
+
+### RAM math (system, not VRAM)
+
+22 GB model in VRAM doesn't touch system RAM, but xares + workspaces do:
+
+| Component | Idle |
+|---|---|
+| dockerd + containerd | ~300 MB |
+| Caddy | ~50 MB |
+| xaresaicoder nginx + server | ~700 MB |
+| Per workspace (code-server idle) | ~300 MB |
+| **Floor** | **~1.5 GB system RAM, plus 2-4 GB per active workspace** |
+
+Vast machines with 32-GB GPUs typically come with 32-64 GB system RAM and 8-16 vCPUs, so headroom is comfortable. Set `MAX_CONCURRENT_WORKSPACES=2` in `xares-env.template` if you want to be conservative.

@@ -205,12 +205,58 @@ Der Launcher nimmt Image + onstart aus dem Template und injected nur Mode-spezif
 
 Tieferes Diagnose-Material: siehe [LESSONS.md](LESSONS.md).
 
+## Full-Stack-Mode (`--with-xares`)
+
+Auf derselben gemieteten Maschine laeuft **LLM und browserbasierte AI-Dev-Umgebung** ([xaresaicoder](https://github.com/dg1001/xaresaicoder)) zusammen, vor Caddy mit Wildcard-TLS via duckdns + Let's Encrypt und HTTP Basic Auth. Eine URL, keine lokale Installation, voll TLS.
+
+```bash
+# Einmaliges Setup auf https://www.duckdns.org/ (kostenlos, ohne Kreditkarte):
+#   1. Einloggen (GitHub/Google/Twitter/Reddit OAuth)
+#   2. Freie Subdomain waehlen — das Formular zeigt sofort ob noch frei
+#   3. Account-Token oben auf der Seite kopieren
+# `mybox` unten ist nur ein Beispiel — ueberall *deinen* gewaehlten Namen einsetzen.
+export DUCKDNS_TOKEN=...
+export VAST_API_KEY=...
+
+# llama-server + xaresaicoder + Caddy auf einer gemieteten GPU
+python summon.py --with-xares --xares-domain mybox --solo-mode
+# → IDE-Frontend:  https://mybox.duckdns.org   (BasicAuth: admin / <pw wird gedruckt>)
+# → LLM-Endpoint:  https://llm.mybox.duckdns.org/v1   (Bearer: <key wird gedruckt>)
+# → Workspaces:    https://<uuid>.mybox.duckdns.org   (per-Project code-server)
+# → App-Ports:     https://<uuid>-3000.mybox.duckdns.org
+
+# Aufraeumen (zerstoert Instanz UND raeumt den duckdns-A-Record auf)
+python summon.py --destroy <id> --duckdns-token $DUCKDNS_TOKEN
+```
+
+Passt Token und Subdomain nicht zusammen (z.B. Tippfehler oder Subdomain nie registriert), liefert das erste DNS-Update `KO` zurueck und Caddys Cert-Anforderung scheitert — also erst die Subdomain bei duckdns anlegen, dann launchen.
+
+**Was auf der Box laeuft:**
+
+```
+┌─ vast.ai container (privileged) ──────────────────────┐
+│  llama-server (host-Prozess, GPU)                     │
+│  Caddy :443 → TLS-Termination, BasicAuth, Routing     │
+│  dockerd (DinD)                                       │
+│    └─ xaresaicoder/nginx + server + workspaces        │
+└───────────────────────────────────────────────────────┘
+```
+
+**Zusaetzliche Voraussetzungen ggue. Standard-Mode:**
+
+- `pip install bcrypt` (in `requirements.txt`) fuer BasicAuth-Hashing
+- vast.ai-Host der `--privileged` erlaubt (fuer DinD). Lehnt ein Host ab, zerstoert der Launcher die Instance und probiert den naechsten Offer (gleiches Retry-Pattern wie `--min-real-mbps`)
+- Custom-Image `ghcr.io/dg1001/gpu-summon-fullstack:latest` (einmalig via `xares/build-and-push.sh` gebaut)
+- `--disk` wird automatisch auf 100 GB hochgesetzt fuer xares-Images + Workspaces
+
+Details zur Orchestrierung: `xares/Dockerfile` + `xares/onstart.sh`. Stolperfallen: [LESSONS.md § Full-Stack Mode](LESSONS.md#full-stack-mode-with-xares).
+
 ## Roadmap
 
 - [ ] Pluggable GPU-Marketplace-Backends (RunPod, Lambda, Salad)
 - [ ] Optional vLLM / SGLang als Backends neben llama.cpp
 - [ ] Native CLI-Entry-Point (`gpu-summon` statt `python summon.py`)
-- [ ] Optionaler Reverse-Proxy mit TLS-Termination (damit der Endpoint sicher ausserhalb von vertrauenswuerdigen Netzen erreichbar ist)
+- [x] Optionaler Reverse-Proxy mit TLS-Termination (`--with-xares` bringt Caddy + duckdns Wildcard-Cert mit)
 
 ## Contributing
 
