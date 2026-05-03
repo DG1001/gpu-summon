@@ -205,9 +205,9 @@ The launcher uses the template's image + onstart, only injecting mode-specific e
 
 For deeper diagnostics, see [LESSONS.md](LESSONS.md).
 
-## Full-Stack Mode (`--with-xares`)
+## code-server Mode (`--with-codeserver`)
 
-The same rented machine can host **the LLM and a browser-based AI dev environment** ([xaresaicoder](https://github.com/dg1001/xaresaicoder)) on one box, fronted by Caddy with Wildcard-TLS via duckdns + Let's Encrypt and HTTP Basic Auth. One URL, no local install, full TLS.
+The same rented machine can host **the LLM and a browser-based VS Code** ([code-server](https://github.com/coder/code-server)) on one box, fronted by Caddy with Wildcard-TLS via duckdns + Let's Encrypt. One URL, no local install, full TLS, password-protected via code-server's built-in login.
 
 ```bash
 # One-time setup at https://www.duckdns.org/ (free, no credit card):
@@ -218,45 +218,41 @@ The same rented machine can host **the LLM and a browser-based AI dev environmen
 export DUCKDNS_TOKEN=...
 export VAST_API_KEY=...
 
-# Launch llama-server + xaresaicoder + Caddy on a single rented GPU
-python summon.py --with-xares --xares-domain mybox --solo-mode
-# → IDE-Frontend:  https://mybox.duckdns.org   (BasicAuth: admin / <printed pw>)
+# Launch llama-server + code-server + Caddy on a single rented GPU
+python summon.py --with-codeserver --code-domain mybox --solo-mode
+# → Browser-IDE:   https://mybox.duckdns.org      (login: <printed password>)
 # → LLM-Endpoint:  https://llm.mybox.duckdns.org/v1   (Bearer: <printed key>)
-# → Workspaces:    https://<uuid>.mybox.duckdns.org   (per-project code-server)
-# → App ports:     https://<uuid>-3000.mybox.duckdns.org
 
 # Cleanup (destroys instance AND clears the duckdns A-record)
 python summon.py --destroy <id> --duckdns-token $DUCKDNS_TOKEN
 ```
 
-If the token doesn't match the subdomain (e.g. you typo'd or never registered it), the first DNS update returns `KO` and Caddy's cert request will fail — register the subdomain first, then launch.
+If the token doesn't match the subdomain (typo or never registered), the first DNS update returns `KO` and Caddy's cert request fails — register the subdomain first, then launch.
 
 **What's running on the box:**
 
 ```
-┌─ vast.ai container (privileged) ──────────────────────┐
-│  llama-server (host process, GPU)                     │
-│  Caddy :443 → TLS termination, Basic Auth, routing    │
-│  dockerd (DinD)                                       │
-│    └─ xaresaicoder/nginx + server + workspaces        │
-└───────────────────────────────────────────────────────┘
+┌─ vast.ai container (no Docker, all native) ──┐
+│  llama-server (host process, GPU)            │
+│  code-server (host process, password auth)   │
+│  Caddy :443 → TLS, routing                   │
+└──────────────────────────────────────────────┘
 ```
+
+We originally tried Docker-in-Docker for full per-project workspace isolation but vast.ai disallows `--privileged` on shared hosts — `dockerd` can't configure iptables and dies at boot. See [LESSONS.md § code-server Mode](LESSONS.md#code-server-mode-with-codeserver) for the full story.
 
 **Requirements beyond the standard mode:**
 
-- `pip install bcrypt` (in `requirements.txt`) for BasicAuth hashing
-- A vast.ai host that allows `--privileged` (needed for DinD). If a host refuses, the launcher destroys + retries the next offer (same retry pattern as `--min-real-mbps`)
-- The custom image `ghcr.io/dg1001/gpu-summon-fullstack:latest` (built once via `xares/build-and-push.sh`)
-- `--disk` is auto-bumped to 100 GB for xares images + workspaces
-
-See `xares/Dockerfile` and `xares/onstart.sh` for the orchestration details, and [LESSONS.md § Full-Stack Mode](LESSONS.md#full-stack-mode-with-xares) for the gotchas we hit while building this.
+- A duckdns.org subdomain + token (free)
+- The custom image `ghcr.io/dg1001/gpu-summon-codeserver:latest` (built once via `codeserver/build-and-push.sh` or the GitHub Actions workflow)
+- `--disk` is auto-bumped to 60 GB for image + model cache + IDE state
 
 ## Roadmap
 
 - [ ] Pluggable GPU marketplace backends (RunPod, Lambda, Salad)
 - [ ] Optional vLLM / SGLang backends alongside llama.cpp
 - [ ] Native CLI entry point (`gpu-summon` instead of `python summon.py`)
-- [x] Optional reverse proxy with TLS termination (`--with-xares` ships with Caddy + duckdns wildcard cert)
+- [x] Optional reverse proxy with TLS termination (`--with-codeserver` ships with Caddy + duckdns wildcard cert)
 
 ## Contributing
 

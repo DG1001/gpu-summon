@@ -205,9 +205,9 @@ Der Launcher nimmt Image + onstart aus dem Template und injected nur Mode-spezif
 
 Tieferes Diagnose-Material: siehe [LESSONS.md](LESSONS.md).
 
-## Full-Stack-Mode (`--with-xares`)
+## code-server-Mode (`--with-codeserver`)
 
-Auf derselben gemieteten Maschine laeuft **LLM und browserbasierte AI-Dev-Umgebung** ([xaresaicoder](https://github.com/dg1001/xaresaicoder)) zusammen, vor Caddy mit Wildcard-TLS via duckdns + Let's Encrypt und HTTP Basic Auth. Eine URL, keine lokale Installation, voll TLS.
+Auf derselben gemieteten Maschine laeuft **LLM und browserbasiertes VS Code** ([code-server](https://github.com/coder/code-server)) zusammen, vor Caddy mit Wildcard-TLS via duckdns + Let's Encrypt. Eine URL, keine lokale Installation, voll TLS, mit code-server's eingebauter Login-Page.
 
 ```bash
 # Einmaliges Setup auf https://www.duckdns.org/ (kostenlos, ohne Kreditkarte):
@@ -218,45 +218,41 @@ Auf derselben gemieteten Maschine laeuft **LLM und browserbasierte AI-Dev-Umgebu
 export DUCKDNS_TOKEN=...
 export VAST_API_KEY=...
 
-# llama-server + xaresaicoder + Caddy auf einer gemieteten GPU
-python summon.py --with-xares --xares-domain mybox --solo-mode
-# → IDE-Frontend:  https://mybox.duckdns.org   (BasicAuth: admin / <pw wird gedruckt>)
+# llama-server + code-server + Caddy auf einer gemieteten GPU
+python summon.py --with-codeserver --code-domain mybox --solo-mode
+# → Browser-IDE:   https://mybox.duckdns.org      (Login: <pw wird gedruckt>)
 # → LLM-Endpoint:  https://llm.mybox.duckdns.org/v1   (Bearer: <key wird gedruckt>)
-# → Workspaces:    https://<uuid>.mybox.duckdns.org   (per-Project code-server)
-# → App-Ports:     https://<uuid>-3000.mybox.duckdns.org
 
 # Aufraeumen (zerstoert Instanz UND raeumt den duckdns-A-Record auf)
 python summon.py --destroy <id> --duckdns-token $DUCKDNS_TOKEN
 ```
 
-Passt Token und Subdomain nicht zusammen (z.B. Tippfehler oder Subdomain nie registriert), liefert das erste DNS-Update `KO` zurueck und Caddys Cert-Anforderung scheitert — also erst die Subdomain bei duckdns anlegen, dann launchen.
+Passen Token und Subdomain nicht zusammen (Tippfehler oder Subdomain nie registriert), liefert das erste DNS-Update `KO` zurueck und Caddys Cert-Anforderung scheitert — also erst die Subdomain bei duckdns anlegen, dann launchen.
 
 **Was auf der Box laeuft:**
 
 ```
-┌─ vast.ai container (privileged) ──────────────────────┐
-│  llama-server (host-Prozess, GPU)                     │
-│  Caddy :443 → TLS-Termination, BasicAuth, Routing     │
-│  dockerd (DinD)                                       │
-│    └─ xaresaicoder/nginx + server + workspaces        │
-└───────────────────────────────────────────────────────┘
+┌─ vast.ai container (kein Docker, alles nativ) ┐
+│  llama-server (Host-Prozess, GPU)             │
+│  code-server (Host-Prozess, Passwort-Auth)    │
+│  Caddy :443 → TLS, Routing                    │
+└───────────────────────────────────────────────┘
 ```
+
+Ursprünglich war Docker-in-Docker geplant fuer Per-Projekt-Workspace-Isolation, aber vast.ai erlaubt `--privileged` auf shared Hosts nicht — `dockerd` kann iptables nicht setup'pen und stirbt beim Boot. Details: [LESSONS.md § code-server Mode](LESSONS.md#code-server-mode-with-codeserver).
 
 **Zusaetzliche Voraussetzungen ggue. Standard-Mode:**
 
-- `pip install bcrypt` (in `requirements.txt`) fuer BasicAuth-Hashing
-- vast.ai-Host der `--privileged` erlaubt (fuer DinD). Lehnt ein Host ab, zerstoert der Launcher die Instance und probiert den naechsten Offer (gleiches Retry-Pattern wie `--min-real-mbps`)
-- Custom-Image `ghcr.io/dg1001/gpu-summon-fullstack:latest` (einmalig via `xares/build-and-push.sh` gebaut)
-- `--disk` wird automatisch auf 100 GB hochgesetzt fuer xares-Images + Workspaces
-
-Details zur Orchestrierung: `xares/Dockerfile` + `xares/onstart.sh`. Stolperfallen: [LESSONS.md § Full-Stack Mode](LESSONS.md#full-stack-mode-with-xares).
+- duckdns.org Subdomain + Token (kostenlos)
+- Custom-Image `ghcr.io/dg1001/gpu-summon-codeserver:latest` (einmalig via `codeserver/build-and-push.sh` oder GitHub Actions Workflow gebaut)
+- `--disk` wird automatisch auf 60 GB hochgesetzt fuer Image + Modell-Cache + IDE-State
 
 ## Roadmap
 
 - [ ] Pluggable GPU-Marketplace-Backends (RunPod, Lambda, Salad)
 - [ ] Optional vLLM / SGLang als Backends neben llama.cpp
 - [ ] Native CLI-Entry-Point (`gpu-summon` statt `python summon.py`)
-- [x] Optionaler Reverse-Proxy mit TLS-Termination (`--with-xares` bringt Caddy + duckdns Wildcard-Cert mit)
+- [x] Optionaler Reverse-Proxy mit TLS-Termination (`--with-codeserver` bringt Caddy + duckdns Wildcard-Cert mit)
 
 ## Contributing
 

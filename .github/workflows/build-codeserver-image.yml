@@ -1,22 +1,22 @@
-name: build-fullstack-image
+name: build-codeserver-image
 
-# Builds and pushes the gpu-summon full-stack image (cuda + dockerd +
-# llama.cpp + caddy) to GHCR. Used by `summon.py --with-xares`.
+# Builds and pushes the gpu-summon code-server image (cuda + llama.cpp +
+# code-server + caddy) to GHCR. Used by `summon.py --with-codeserver`.
 #
 # Triggers:
-#   - push to main when xares/** changes -> rebuild :latest
+#   - push to main when codeserver/** changes -> rebuild :latest
 #   - manual via the Actions tab (workflow_dispatch) for ad-hoc builds
 #
 # After the FIRST successful build, go to
-#   https://github.com/users/<owner>/packages/container/gpu-summon-fullstack/settings
+#   https://github.com/users/<owner>/packages/container/gpu-summon-codeserver/settings
 # and switch package visibility to "Public" so vast.ai can pull anonymously.
 
 on:
   push:
     branches: [main]
     paths:
-      - 'xares/**'
-      - '.github/workflows/build-fullstack-image.yml'
+      - 'codeserver/**'
+      - '.github/workflows/build-codeserver-image.yml'
   workflow_dispatch:
 
 jobs:
@@ -43,13 +43,13 @@ jobs:
       # account (e.g. "Dg1001" -> push fails). Lowercasing here avoids that.
       - name: Compute image name
         id: img
-        run: echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/gpu-summon-fullstack" >> $GITHUB_OUTPUT
+        run: echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/gpu-summon-codeserver" >> $GITHUB_OUTPUT
 
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./xares
-          file: ./xares/Dockerfile
+          context: ./codeserver
+          file: ./codeserver/Dockerfile
           platforms: linux/amd64
           push: true
           tags: |

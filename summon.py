@@ -106,27 +106,26 @@ BACKENDS = {
         "ready_check": "http://{host}:{port}/api/tags",
         "disk_gb_min": 60,
     },
-    # Full-Stack: llama-server + xaresaicoder (code-server + Workspace-Mgmt)
-    # + Caddy mit duckdns-Wildcard-TLS + HTTP-Basic-Auth. Erfordert das Custom-
-    # Image gpu-summon-fullstack (siehe xares/Dockerfile + xares/build-and-push.sh)
-    # und einen vast.ai-Host der --privileged akzeptiert (DinD).
-    # Nicht direkt via --backend waehlbar - aktiviert sich ueber --with-xares.
-    "fullstack": {
-        "image": "ghcr.io/dg1001/gpu-summon-fullstack:latest",
+    # code-server: llama-server + browserbasiertes VS Code (code-server) +
+    # Caddy mit duckdns-Wildcard-TLS. Alles laeuft als Host-Prozess - KEIN
+    # Docker-in-Docker, weil vast.ai Standard-Offers --privileged nicht
+    # erlauben (siehe LESSONS.md "vast.ai forbids privileged mode").
+    # Nicht direkt via --backend waehlbar - aktiviert sich ueber --with-codeserver.
+    "codeserver": {
+        "image": "ghcr.io/dg1001/gpu-summon-codeserver:latest",
         "exposed_port": 443,        # Caddy/HTTPS - das User-Facing-Endpoint
-        "extra_ports": [8080, 80],  # 8080: direkter LLM (legacy + opencode)
-                                    # 80:   ACME HTTP-Fallback, wird nicht aktiv genutzt
+        "extra_ports": [8080, 80],  # 8080: direkter LLM (Legacy + opencode)
+                                    # 80:   ACME HTTP-Fallback, ungenutzt aber harmlos
         "api_path": "/v1",
         "default_model": "unsloth/Qwen3.6-27B-GGUF:UD-Q5_K_XL",
         # /opt/onstart.sh ist im Image als CMD gesetzt, vast erwartet aber
-        # explizites onstart_cmd. Wir leiten Output in Datei damit man via
-        # SSH bei Problemen reinschauen kann.
+        # explizites onstart_cmd. Output in Datei damit via SSH debugbar.
         "onstart_template": "/opt/onstart.sh > /var/log/onstart.log 2>&1",
-        # Wir checken die xares-Health durch Caddy hindurch ueber den Domain-
-        # Namen (HTTPS), nicht ueber bare IP - dadurch validieren wir gleich,
-        # dass duckdns + Cert + Caddy + xares zusammen funktionieren.
-        "ready_check": "https://{domain}/api/health",
-        "disk_gb_min": 100,         # +20GB fuer xares-images, code-server, workspaces
+        # code-server's Login-Page antwortet ohne Auth mit 200 (HTML), daher
+        # eignet sich der Apex direkt als Readiness-Check. Validiert in einem
+        # Rutsch: duckdns-DNS + Caddy-Cert + Caddy-Routing + code-server up.
+        "ready_check": "https://{domain}/",
+        "disk_gb_min": 60,          # llama-cache + code-server + Marge
     },
 }
 
@@ -305,7 +304,7 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
                     label: str = "opencode-llm",
                     api_key: str = "",
                     template_hash: str | None = None,
-                    fullstack_env: dict | None = None,
+                    extra_env: dict | None = None,
                     image_override: str | None = None) -> int:
     """Erstellt die Instanz mit dem gewuenschten Backend-Image.
 
@@ -316,12 +315,11 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
     Skript injected nur Mode-Env (LLAMA_PARALLEL/LLAMA_CTX/LLAMA_MODEL/
     LLAMA_API_KEY). Aktuell nur fuer llamacpp-Backend mit env-aware
     onstart unterstuetzt.
-    fullstack_env: bei backend='fullstack' das vorgefertigte env-dict aus
-    build_fullstack_env() (DOMAIN, DUCKDNS_TOKEN, BasicAuth-Credentials,
-    Port-Mappings). Wird hier nicht selbst gebaut weil der Aufrufer schon
-    das bcrypt-Hashing gemacht hat (single source of truth).
-    image_override: ueberschreibt cfg['image'] (fuer --xares-image custom
-    builds). Nur bei backend='fullstack' relevant.
+    extra_env: bei backend='codeserver' das vorgefertigte env-dict aus
+    build_codeserver_env() (DOMAIN, DUCKDNS_TOKEN, CODESERVER_PASSWORD,
+    Port-Mappings). Wird vom Aufrufer gebaut, hier nur durchgereicht.
+    image_override: ueberschreibt cfg['image'] (fuer --code-image custom
+    builds). Nur bei backend='codeserver' relevant.
     """
     cfg = BACKENDS[backend]
     use_template = template_hash is not None
@@ -331,8 +329,8 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
             f"--template-hash aktuell nur mit backend=llamacpp unterstuetzt, "
             f"nicht {backend}")
 
-    if backend == "fullstack" and fullstack_env is None:
-        raise ValueError("backend=fullstack erfordert fullstack_env Parameter")
+    if backend == "codeserver" and extra_env is None:
+        raise ValueError("backend=codeserver erfordert extra_env Parameter")
 
     image = image_override or cfg["image"]
 
@@ -348,8 +346,8 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
         print(f"[create] Image: {image}")
     print(f"[create] Erstelle Instanz auf Offer {offer['id']}...")
 
-    if backend == "fullstack":
-        env = dict(fullstack_env)  # copy so we don't mutate caller's dict
+    if backend == "codeserver":
+        env = dict(extra_env)  # copy so we don't mutate caller's dict
     else:
         env = {
             f"-p {cfg['exposed_port']}:{cfg['exposed_port']}": "1",
@@ -368,7 +366,7 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
         env["OLLAMA_HOST"] = "0.0.0.0:11434"
         env["OLLAMA_KEEP_ALIVE"] = "30m"
         env["OLLAMA_FLASH_ATTENTION"] = "1"
-    # backend == "fullstack": env ist schon komplett aus build_fullstack_env
+    # backend == "codeserver": env ist schon komplett aus build_codeserver_env
 
     if use_template:
         # Template liefert image + onstart_cmd + runtype.
@@ -386,7 +384,7 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
         if backend == "llamacpp":
             onstart = cfg["onstart_template"].format(
                 MODEL=model, CTX=ctx, PARALLEL=parallel, API_KEY=api_key or "")
-        elif backend == "fullstack":
+        elif backend == "codeserver":
             # /opt/onstart.sh ist im Image als CMD gesetzt; vast erwartet
             # aber explizites onstart_cmd. Template hat keine Platzhalter
             # - alle Werte kommen ueber env.
@@ -472,10 +470,10 @@ def wait_until_ready(url: str, *, headers: dict | None = None,
     """
     Pollt eine HTTP(S)-URL bis sie 200 antwortet.
     llama-server laedt das Modell beim ersten Start von HuggingFace -
-    je nach Modellgroesse 5-15 Minuten. Bei Full-Stack-Mode kommt
-    noch xares-deploy + Caddy-ACME-Cert obendrauf (~1-2 Min extra).
+    je nach Modellgroesse 5-15 Minuten. Bei --with-codeserver kommt
+    noch Caddy-ACME-Cert + code-server-Startup obendrauf (~30s extra).
 
-    label: optionales Tag fuer die Ausgabe (z.B. 'llm' / 'xares') wenn
+    label: optionales Tag fuer die Ausgabe (z.B. 'llm' / 'code') wenn
     mehrere Probes hintereinander laufen.
     """
     tag = f" [{label}]" if label else ""
@@ -629,13 +627,13 @@ def smoketest_hf_bandwidth(vast: VastAI, instance_id: int,
 def write_opencode_config(host: str, port: int, model: str, backend: str,
                            api_key: str = "",
                            config_dir: Path | None = None,
-                           fullstack_domain: str | None = None) -> Path:
+                           code_domain: str | None = None) -> Path:
     """Schreibt opencode.json + auth.json fuer das remote Setup.
 
     api_key: das Bearer-Token das llama-server erwartet. Leer = kein Auth
     (Default-Dummy-Key wird geschrieben, llama-server akzeptiert dann eh
     alles).
-    fullstack_domain: bei Full-Stack-Mode (z.B. 'mybox.duckdns.org') wird
+    code_domain: bei --with-codeserver (z.B. 'mybox.duckdns.org') wird
     der baseURL auf https://llm.{domain}/v1 gesetzt statt auf bare-IP -
     nutzt das Caddy-TLS und versteckt die wechselnde vast-IP.
     """
@@ -646,9 +644,9 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
     auth_dir.mkdir(parents=True, exist_ok=True)
 
     api_path = BACKENDS[backend]["api_path"]
-    if fullstack_domain:
-        base_url = f"https://llm.{fullstack_domain}{api_path}"
-        display_host = fullstack_domain
+    if code_domain:
+        base_url = f"https://llm.{code_domain}{api_path}"
+        display_host = code_domain
     else:
         base_url = f"http://{host}:{port}{api_path}"
         display_host = host
@@ -714,7 +712,7 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
 
 
 # -----------------------------------------------------------------------------
-# Full-Stack Helpers (--with-xares)
+# code-server Helpers (--with-codeserver)
 # -----------------------------------------------------------------------------
 
 DUCKDNS_UPDATE_URL = "https://www.duckdns.org/update"
@@ -745,33 +743,16 @@ def update_duckdns(subdomain: str, token: str, ip: str | None = None) -> bool:
         return False
 
 
-def caddy_basicauth_hash(password: str) -> str:
-    """Erzeugt einen Caddy-kompatiblen bcrypt-Hash fuer HTTP-Basic-Auth.
-
-    Caddy akzeptiert den $2a$/$2b$ Standard-Output von bcrypt direkt. Wir
-    machen das Python-side damit das Klartext-Passwort nie ins Container-env
-    wandert.
-    """
-    try:
-        import bcrypt
-    except ImportError:
-        raise RuntimeError(
-            "bcrypt nicht installiert. Bitte: pip install bcrypt "
-            "(noetig fuer --with-xares; fuer den normalen Mode nicht gebraucht)"
-        )
-    # cost=10 ist Caddy-Default; Hash ist deterministisch im Format aber
-    # Salt ist random, also bei jedem Aufruf anders -- harmlos da wir den
-    # Hash in einem ephemeren Container ablegen.
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=10)).decode()
-
-
-def build_fullstack_env(*, domain: str, duckdns_token: str, llm_api_key: str,
-                         basic_user: str, basic_hash: str,
+def build_codeserver_env(*, domain: str, duckdns_token: str, llm_api_key: str,
+                         codeserver_password: str,
                          model: str, ctx: int, parallel: int) -> dict:
-    """Sammelt die env-Eintraege fuer create_instance() im Full-Stack-Mode.
+    """Sammelt die env-Eintraege fuer create_instance() im code-server-Mode.
 
     Vast.ai-Konvention: docker -p Mappings werden als env-keys uebergeben
     ("-p HOST:CONTAINER" -> "1"); echte Container-Env als KEY -> VALUE.
+
+    code-server's eigene PASSWORD-env aktiviert die Login-Seite mit Cookie-
+    Auth. Wir brauchen daher kein BasicAuth in Caddy davor.
     """
     return {
         # Port-Mappings
@@ -782,8 +763,7 @@ def build_fullstack_env(*, domain: str, duckdns_token: str, llm_api_key: str,
         "DOMAIN": domain,
         "DUCKDNS_TOKEN": duckdns_token,
         "LLAMA_API_KEY": llm_api_key,
-        "XARES_BASIC_USER": basic_user,
-        "XARES_BASIC_HASH": basic_hash,
+        "CODESERVER_PASSWORD": codeserver_password,
         "LLAMA_MODEL": model,
         "LLAMA_CTX": str(ctx),
         "LLAMA_PARALLEL": str(parallel),
@@ -934,31 +914,29 @@ def cmd_list(vast: VastAI) -> None:
 
 
 def cmd_launch(args, vast: VastAI) -> None:
-    # Full-Stack-Mode: zwingt backend=fullstack, validiert Pflicht-Inputs,
-    # generiert BasicAuth-Credentials. Muss VOR dem Backend-Lookup passieren.
-    fullstack_domain = None
-    fullstack_env = None
-    basic_user = None
-    basic_pass = None
-    if args.with_xares:
-        if not args.xares_domain:
-            print("FEHLER: --with-xares erfordert --xares-domain SUBDOMAIN")
+    # code-server-Mode: zwingt backend=codeserver, validiert Pflicht-Inputs,
+    # generiert das Workspace-Passwort. Muss VOR dem Backend-Lookup passieren.
+    code_domain = None
+    code_env = None
+    code_password = None
+    if args.with_codeserver:
+        if not args.code_domain:
+            print("FEHLER: --with-codeserver erfordert --code-domain SUBDOMAIN")
             sys.exit(1)
         if not args.duckdns_token:
-            print("FEHLER: --with-xares erfordert DUCKDNS_TOKEN env-var "
+            print("FEHLER: --with-codeserver erfordert DUCKDNS_TOKEN env-var "
                   "oder --duckdns-token TOKEN")
             sys.exit(1)
-        if "." in args.xares_domain:
-            print("FEHLER: --xares-domain ist nur die Subdomain "
+        if "." in args.code_domain:
+            print("FEHLER: --code-domain ist nur die Subdomain "
                   "(z.B. 'mybox', NICHT 'mybox.duckdns.org')")
             sys.exit(1)
-        args.backend = "fullstack"
-        fullstack_domain = f"{args.xares_domain}.duckdns.org"
-        # Disk-Min: 100 GB fuer xares-images + workspaces
-        if args.disk < BACKENDS["fullstack"]["disk_gb_min"]:
-            print(f"[xares]  --disk {args.disk} zu klein fuer Full-Stack, "
-                  f"setze auf {BACKENDS['fullstack']['disk_gb_min']}")
-            args.disk = BACKENDS["fullstack"]["disk_gb_min"]
+        args.backend = "codeserver"
+        code_domain = f"{args.code_domain}.duckdns.org"
+        if args.disk < BACKENDS["codeserver"]["disk_gb_min"]:
+            print(f"[code]   --disk {args.disk} zu klein, "
+                  f"setze auf {BACKENDS['codeserver']['disk_gb_min']}")
+            args.disk = BACKENDS["codeserver"]["disk_gb_min"]
 
     backend_cfg = BACKENDS[args.backend]
     model = args.model or backend_cfg["default_model"]
@@ -975,33 +953,24 @@ def cmd_launch(args, vast: VastAI) -> None:
         api_key = args.llm_api_key
         print(f"[auth]   Nutze --llm-api-key: {api_key[:8]}...")
 
-    # BasicAuth fuer xares-Frontend (nur Full-Stack-Mode).
-    if args.with_xares:
-        basic_user = args.xares_basic_user
-        if args.xares_basic_pass is None:
-            basic_pass = secrets.token_urlsafe(18)
-            print(f"[xares]  BasicAuth Pass auto-generiert: {basic_pass}")
-        elif args.xares_basic_pass == "":
-            basic_pass = ""
-            print("[xares]  --xares-basic-pass='' -> KEIN BasicAuth, "
-                  "Frontend OFFEN!")
+    # code-server Workspace-Password (nur --with-codeserver).
+    if args.with_codeserver:
+        if args.code_password is None:
+            code_password = secrets.token_urlsafe(18)
+            print(f"[code]   Workspace-Pass auto-generiert: {code_password}")
+        elif args.code_password == "":
+            print("FEHLER: leeres code-server-Passwort - dann waere die IDE "
+                  "oeffentlich erreichbar. Bitte Passwort setzen oder "
+                  "Default-Auto-Gen lassen.")
+            sys.exit(1)
         else:
-            basic_pass = args.xares_basic_pass
-            print(f"[xares]  Nutze --xares-basic-pass: {basic_pass[:4]}...")
-        if basic_pass:
-            basic_hash = caddy_basicauth_hash(basic_pass)
-        else:
-            # Caddy braucht trotzdem irgendeinen Hash; "$2a$10$..." mit nicht-
-            # matchendem Salt = effektiv kein User akzeptiert. Aber wenn der
-            # User explizit '' gewaehlt hat, sollten wir basicauth gar nicht
-            # rendern. Fuer den MVP: rendere einen Dummy-Hash und warne.
-            basic_hash = caddy_basicauth_hash(secrets.token_urlsafe(32))
-        fullstack_env = build_fullstack_env(
-            domain=fullstack_domain,
+            code_password = args.code_password
+            print(f"[code]   Nutze --code-password: {code_password[:4]}...")
+        code_env = build_codeserver_env(
+            domain=code_domain,
             duckdns_token=args.duckdns_token,
             llm_api_key=api_key,
-            basic_user=basic_user,
-            basic_hash=basic_hash,
+            codeserver_password=code_password,
             model=model,
             ctx=args.num_ctx,
             parallel=args.parallel,
@@ -1051,8 +1020,8 @@ def cmd_launch(args, vast: VastAI) -> None:
                 disk_gb=args.disk, ctx=args.num_ctx, parallel=args.parallel,
                 label=args.label, api_key=api_key,
                 template_hash=args.template_hash,
-                fullstack_env=fullstack_env,
-                image_override=args.xares_image if args.with_xares else None,
+                extra_env=code_env,
+                image_override=args.code_image if args.with_codeserver else None,
             )
         except Exception as e:
             print(f"[try]   create_instance fehlgeschlagen: {e}")
@@ -1104,25 +1073,25 @@ def cmd_launch(args, vast: VastAI) -> None:
         ip, port = get_endpoint(inst, args.backend)
         print(f"\n[ready] Instance laeuft auf {ip}:{port}")
 
-        if args.with_xares:
+        if args.with_codeserver:
             # duckdns-A-Record auf die neue vast-IP setzen, BEVOR Caddy
             # eine ACME DNS-01 Challenge versucht (sonst schlaegt der erste
             # Cert-Versuch fehl). Der TXT-Record kommt von Caddy selbst -
             # wir setzen nur den A-Record.
-            print(f"[xares]  Setze duckdns: {fullstack_domain} -> {ip}")
-            ok = update_duckdns(args.xares_domain, args.duckdns_token, ip=ip)
+            print(f"[code]   Setze duckdns: {code_domain} -> {ip}")
+            ok = update_duckdns(args.code_domain, args.duckdns_token, ip=ip)
             if not ok:
-                print("[xares]  WARN: duckdns-Update fehlgeschlagen - "
+                print("[code]   WARN: duckdns-Update fehlgeschlagen - "
                       "Caddy ACME-Cert wird vermutlich nicht gehen.")
 
             print("[ready] Warte auf llama-server (5-15 Min Modell-Download)...")
-            llm_url = f"https://llm.{fullstack_domain}{backend_cfg['api_path']}/models"
+            llm_url = f"https://llm.{code_domain}{backend_cfg['api_path']}/models"
             llm_headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
             wait_until_ready(llm_url, headers=llm_headers,
                              timeout_sec=args.model_timeout, label="llm")
-            print("[ready] Warte auf xaresaicoder (Caddy-ACME + xares-Deploy)...")
-            wait_until_ready(f"https://{fullstack_domain}/api/health",
-                             timeout_sec=300, label="xares")
+            print("[ready] Warte auf code-server (Caddy-ACME + Login-Page)...")
+            wait_until_ready(f"https://{code_domain}/",
+                             timeout_sec=300, label="code")
         else:
             url = backend_cfg["ready_check"].format(host=ip, port=port)
             print("[ready] Warte auf Modell-Download und Start "
@@ -1135,26 +1104,23 @@ def cmd_launch(args, vast: VastAI) -> None:
 
     if args.write_config:
         write_opencode_config(ip, port, model, args.backend, api_key=api_key,
-                              fullstack_domain=fullstack_domain)
+                              code_domain=code_domain)
 
     print("\n" + "="*60)
-    if args.with_xares:
-        print("FERTIG. Full-Stack AI-Dev-Umgebung laeuft.")
+    if args.with_codeserver:
+        print("FERTIG. AI-Dev-Umgebung laeuft.")
         print()
-        print(f"  IDE-Frontend:  https://{fullstack_domain}")
-        print(f"  LLM-Endpoint:  https://llm.{fullstack_domain}{backend_cfg['api_path']}")
+        print(f"  Browser-IDE:   https://{code_domain}")
+        print(f"  LLM-Endpoint:  https://llm.{code_domain}{backend_cfg['api_path']}")
         if api_key:
             print(f"  LLM-Bearer:    {api_key}")
-        if basic_pass:
-            print(f"  IDE-Login:     {basic_user} / {basic_pass}")
-        else:
-            print("  IDE-Login:     KEIN BasicAuth (Frontend ist offen!)")
+        print(f"  IDE-Login:     {code_password}   (code-server password)")
         print()
         print("Test:")
         if api_key:
             print(f"  curl -H 'Authorization: Bearer {api_key}' \\")
-            print(f"       https://llm.{fullstack_domain}{backend_cfg['api_path']}/models")
-        print(f"  Browser: https://{fullstack_domain}")
+            print(f"       https://llm.{code_domain}{backend_cfg['api_path']}/models")
+        print(f"  Browser: https://{code_domain}")
         print()
         print("opencode starten (Config zeigt auf https://llm.{...} mit TLS):")
         print("  opencode")
@@ -1175,7 +1141,7 @@ def cmd_launch(args, vast: VastAI) -> None:
         print("  opencode")
     print()
     print("WICHTIG - Aufraeumen wenn fertig (sonst laeuft die Stundenuhr!):")
-    if args.with_xares:
+    if args.with_codeserver:
         print(f"  python {sys.argv[0]} --destroy {instance_id} \\")
         print("      --duckdns-token $DUCKDNS_TOKEN  # raeumt auch DNS auf")
     else:
@@ -1272,42 +1238,38 @@ def main():
                         "(LLAMA_PARALLEL/CTX/MODEL) wird vom Skript injected. "
                         "Setzbar via env-var GPU_SUMMON_TEMPLATE_HASH.")
 
-    # ----- Full-Stack-Mode (--with-xares) -----
-    p.add_argument("--with-xares", action="store_true",
-                   help="Full-Stack-Mode: llama-server PLUS xaresaicoder "
-                        "(browserbasiertes code-server + Workspace-Mgmt) auf "
-                        "der gleichen vast.ai-Maschine, hinter Caddy mit "
-                        "Wildcard-TLS via duckdns + Let's Encrypt und HTTP-"
-                        "Basic-Auth. Braucht --xares-domain und DUCKDNS_TOKEN. "
-                        "Nutzt das Image aus --xares-image (default: gpu-summon-"
-                        "fullstack), das vorab via xares/build-and-push.sh "
-                        "gebaut sein muss.")
-    p.add_argument("--xares-domain", default=None,
+    # ----- code-server-Mode (--with-codeserver) -----
+    p.add_argument("--with-codeserver", action="store_true",
+                   help="Browserbasierte AI-Dev-Umgebung: llama-server PLUS "
+                        "code-server (browser-VS-Code) auf derselben vast.ai-"
+                        "Maschine, hinter Caddy mit Wildcard-TLS via duckdns + "
+                        "Let's Encrypt. Braucht --code-domain und DUCKDNS_TOKEN. "
+                        "Nutzt das Image aus --code-image (default: gpu-summon-"
+                        "codeserver), das vorab via codeserver/build-and-push.sh "
+                        "(oder den GitHub Actions Workflow) gebaut sein muss.")
+    p.add_argument("--code-domain", default=None,
                    help="Subdomain unter duckdns.org, z.B. 'mybox' fuer "
-                        "mybox.duckdns.org. Pflicht bei --with-xares. "
-                        "Wildcard-Cert deckt automatisch *.mybox.duckdns.org "
-                        "ab (workspace-uuids + llm-direct).")
+                        "mybox.duckdns.org. Pflicht bei --with-codeserver. "
+                        "Wildcard-Cert deckt zusaetzlich llm.mybox.duckdns.org "
+                        "ab (direkter LLM-Zugriff fuer opencode).")
     p.add_argument("--duckdns-token",
                    default=os.environ.get("DUCKDNS_TOKEN"),
                    help="duckdns.org API-Token (von https://www.duckdns.org/). "
                         "Setzbar via env-var DUCKDNS_TOKEN. Wird gebraucht "
                         "fuer DNS-Update beim Launch und ACME DNS-01 Challenge "
                         "(Wildcard-Cert).")
-    p.add_argument("--xares-image",
-                   default="ghcr.io/dg1001/gpu-summon-fullstack:latest",
-                   help="Docker-Image fuer Full-Stack-Mode. Default: "
-                        "ghcr.io/dg1001/gpu-summon-fullstack:latest. Selber "
-                        "bauen via xares/build-and-push.sh.")
-    p.add_argument("--xares-basic-user", default="admin",
-                   help="HTTP-Basic-Auth Username vor xares-Frontend "
-                        "(default: admin). Schuetzt das oeffentliche IDE-"
-                        "Endpoint vor Drive-By-Zugriffen.")
-    p.add_argument("--xares-basic-pass",
-                   default=os.environ.get("XARES_BASIC_PASS"),
-                   help="HTTP-Basic-Auth Passwort. Default: 24-char Auto-"
-                        "Generated. Setzbar via env-var XARES_BASIC_PASS. "
-                        "Leerstring '' = kein Auth (NICHT empfohlen, xares-"
-                        "Frontend waere dann oeffentlich erreichbar).")
+    p.add_argument("--code-image",
+                   default="ghcr.io/dg1001/gpu-summon-codeserver:latest",
+                   help="Docker-Image fuer code-server-Mode. Default: "
+                        "ghcr.io/dg1001/gpu-summon-codeserver:latest. Selber "
+                        "bauen via codeserver/build-and-push.sh oder den "
+                        "GitHub Actions Workflow.")
+    p.add_argument("--code-password",
+                   default=os.environ.get("CODESERVER_PASSWORD"),
+                   help="Workspace-Passwort fuer code-server's Login-Page. "
+                        "Default: 24-char Auto-Generated. Setzbar via env-var "
+                        "CODESERVER_PASSWORD. Leerstring '' wird abgelehnt - "
+                        "ohne Passwort waere die IDE oeffentlich.")
 
     p.add_argument("--label", default="opencode-llm")
     p.add_argument("--timeout", type=int, default=600)

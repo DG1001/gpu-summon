@@ -1,0 +1,39 @@
+# gpu-summon code-server Caddyfile
+#
+# Variables (rendered by onstart.sh via envsubst):
+#   ${DOMAIN}         e.g. mybox.duckdns.org
+#   ${DUCKDNS_TOKEN}  duckdns API token (used for ACME DNS-01)
+#   ${ACME_EMAIL}     contact email for Let's Encrypt
+#
+# Auth model:
+#   - Apex: code-server's own login page (PASSWORD env). No Caddy basicauth.
+#   - llm subdomain: llama-server's Bearer-token. No Caddy basicauth (would
+#     force opencode to send two credentials).
+
+{
+    email ${ACME_EMAIL}
+    acme_dns duckdns ${DUCKDNS_TOKEN}
+}
+
+# Apex: code-server. Note the Connection upgrade for VS Code's WebSocket.
+${DOMAIN} {
+    reverse_proxy 127.0.0.1:8443 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+
+# Subdomains. Right now only `llm.${DOMAIN}` is in use, but the wildcard
+# cert covers everything else for free in case we add features later.
+*.${DOMAIN} {
+    @llm host llm.${DOMAIN}
+    handle @llm {
+        reverse_proxy 127.0.0.1:8080
+    }
+
+    handle {
+        respond "unknown subdomain" 404
+    }
+}
