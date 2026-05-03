@@ -70,6 +70,16 @@ every relative URL inside the rendered page will break (it goes to
 code-server's root, not your app). Type the dot-subdomain URL above
 into the address bar instead.
 
+**Annoyance with the VS Code Ports tab:** The "Forwarded Address" column
+shows the dot-subdomain pattern correctly but **without the host port
+suffix** (e.g. `https://5000.${DOMAIN}/` instead of
+`https://5000.${DOMAIN}<HOST_PORT_SUFFIX>/`). This is a VS Code parser
+limitation — its URL builder strips non-standard ports from
+`VSCODE_PROXY_URI`. There's no fix from code-server's side. Workaround:
+copy the URL and append the host port manually in your browser address
+bar. Goes away if/when this box is migrated to a provider that gives a
+real public IP with port 443 (TensorDock, RunPod KVM, etc.).
+
 ## Ports already in use on this box
 
 | Port | Used by | Notes |

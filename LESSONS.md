@@ -453,6 +453,14 @@ The first cert acquisition takes 30-60 s; readiness probes against `https://${DO
 
 duckdns supports only one TXT record value per subdomain at a time. Caddy issues separate certs for the apex block and the wildcard block, so the two ACME DNS-01 challenges run sequentially — the plugin clears the TXT between them. We've seen one transient "TXT did not propagate" retry in the wild but it self-recovers within ~30 s.
 
+### VS Code Ports tab strips non-standard port from VSCODE_PROXY_URI
+
+We set `VSCODE_PROXY_URI=https://{{port}}.${DOMAIN}:${HOST_PORT}/` and `--proxy-domain ${DOMAIN}` on code-server, expecting the Ports tab to show `https://5000.mybox.duckdns.org:44145/`. It shows `https://5000.mybox.duckdns.org/` instead — `:44145` silently stripped.
+
+Confirmed via code-server source review: code-server is just a pass-through; VS Code's internal URL builder is what processes `VSCODE_PROXY_URI` and it discards non-standard port suffixes. There's no code-server CLI flag, env var, or config file knob that overrides this. Open issue territory upstream.
+
+Practical handling: live with it on vast.ai (where we never get host port 443 anyway). Document in AGENTS.md so users know to append the port manually in the browser. Goes away on providers that give a real public IP (TensorDock KVM, RunPod, etc.) where port 443 is yours and `VSCODE_PROXY_URI=https://{{port}}.${DOMAIN}/` (no port suffix needed) just works.
+
 ### Disable Caddy's TXT-propagation self-check on vast.ai
 
 Caddy's default DNS-challenge flow does a self-check before asking the ACME server to validate: it queries duckdns' authoritative nameservers directly (TCP/53 to e.g. `35.183.157.249`). vast.ai hosts often firewall outbound TCP/53 to specific upstream IPs — the result is `dial tcp 35.183.157.249:53: i/o timeout`, Caddy declares the challenge "not ready," falls through LE-prod → LE-staging → ZeroSSL until one happens to succeed before its timeout. First-launch SSL errors and ~5-10 minute apex-cert acquisition were the symptom.
