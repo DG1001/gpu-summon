@@ -46,6 +46,14 @@ RUN curl -fsSL https://code-server.dev/install.sh \
         | sh -s -- --version "${CODESERVER_VERSION}" \
     && code-server --version
 
+# opencode: the user types `opencode` in code-server's terminal and chats
+# with the local llama-server. Installer drops the binary in
+# /root/.opencode/bin -- we symlink to /usr/local/bin so it's on PATH for
+# any shell (code-server's terminals open as root in the container).
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode \
+    && opencode --version
+
 # llama-server binary + libs from the upstream image. Keep the same paths
 # the existing self-contained backend expects (/app + LD_LIBRARY_PATH=/app).
 COPY --from=llamacpp /app /app
