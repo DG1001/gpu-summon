@@ -15,30 +15,39 @@
     acme_dns duckdns ${DUCKDNS_TOKEN}
 }
 
-# Apex: code-server. Note the Connection upgrade for VS Code's WebSocket.
+# Apex: code-server. Caddy's reverse_proxy already forwards X-Forwarded-*
+# headers correctly by default; we only override Host so code-server sees
+# the original (Caddy otherwise rewrites Host to the upstream's address).
 ${DOMAIN} {
     reverse_proxy 127.0.0.1:8443 {
         header_up Host {host}
         header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
     }
 }
 
 # Subdomains:
 #   - llm.${DOMAIN}            -> llama-server :8080
-#   - <port>-${DOMAIN}         -> port-forward to 127.0.0.1:<port>
+#   - <port>.${DOMAIN}         -> port-forward to 127.0.0.1:<port>
 #                                 (use this for Flask/React/etc. running
 #                                 in code-server's terminal -- relative
 #                                 URLs in your app's HTML stay correct,
 #                                 unlike code-server's /proxy/<port>/)
+#
+# IMPORTANT: must use a DOT (e.g. 5000.${DOMAIN}), not a HYPHEN -- duckdns
+# wildcards work for `*.<your-name>.duckdns.org` (third-level), not for
+# sibling names like `<x>-<your-name>.duckdns.org`.
+#
+# The regex matches with an optional `:<port>` trailer so it works whether
+# the user's URL bar carries the random vast host port or not. Caddy's
+# `header_regexp Host` matches the raw Host header (port included), unlike
+# the `host` matcher which strips the port.
 *.${DOMAIN} {
     @llm host llm.${DOMAIN}
     handle @llm {
         reverse_proxy 127.0.0.1:8080
     }
 
-    @portfwd host_regexp portfwd ^([0-9]+)-${DOMAIN}$
+    @portfwd header_regexp portfwd Host ^([0-9]+)\.${DOMAIN}(:[0-9]+)?$
     handle @portfwd {
         reverse_proxy 127.0.0.1:{re.portfwd.1}
     }

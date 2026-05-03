@@ -46,23 +46,29 @@ If you start a dev server (Flask, Vite, FastAPI, etc.), bind it to
 reachable at:
 
 ```
-https://<port>-${DOMAIN}<HOST_PORT_SUFFIX>/
+https://<port>.${DOMAIN}<HOST_PORT_SUFFIX>/
 ```
 
 Examples (replace `<port>` with whatever you bound to):
 
-- Flask `app.run(port=5000)` → `https://5000-${DOMAIN}<HOST_PORT_SUFFIX>/`
-- Vite (default 5173) → `https://5173-${DOMAIN}<HOST_PORT_SUFFIX>/`
-- FastAPI uvicorn `:8000` → `https://8000-${DOMAIN}<HOST_PORT_SUFFIX>/`
+- Flask `app.run(host="0.0.0.0", port=5000)` → `https://5000.${DOMAIN}<HOST_PORT_SUFFIX>/`
+- Vite (default 5173) → `https://5173.${DOMAIN}<HOST_PORT_SUFFIX>/`
+- FastAPI uvicorn `:8000` → `https://8000.${DOMAIN}<HOST_PORT_SUFFIX>/`
+
+**Pattern uses a DOT, not a hyphen** — duckdns wildcards work for
+`*.${DOMAIN}` (third-level subdomains), not for sibling names with a
+hyphen.
 
 This **subdomain-per-port** pattern (rather than path-based proxying like
 code-server's built-in `/proxy/<port>/`) means relative URLs in your app's
 HTML/JS stay correct — links to `/api/foo`, `<form action="/submit">`, etc.
 all resolve naturally.
 
-**Avoid** `https://...${DOMAIN}<HOST_PORT_SUFFIX>/proxy/<port>/` — every
-relative URL inside the rendered page will break (it goes to code-server's
-root, not your app).
+**Avoid** `https://${DOMAIN}<HOST_PORT_SUFFIX>/proxy/<port>/` (the URL
+code-server's "Open in Browser" button suggests for a forwarded port) —
+every relative URL inside the rendered page will break (it goes to
+code-server's root, not your app). Type the dot-subdomain URL above
+into the address bar instead.
 
 ## Ports already in use on this box
 
