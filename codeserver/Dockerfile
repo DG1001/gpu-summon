@@ -34,11 +34,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user for the IDE side. code-server runs as `coder`, so any
-# terminal opened in the browser-IDE lands as `coder`. Passwordless sudo
-# for typical dev workflows (apt install, system tweaks). UID 1000 matches
-# the default for code-server's deb package, so files created in the IDE
-# are owned consistently.
-RUN useradd -u 1000 -m -s /bin/bash coder \
+# terminal opened in the browser-IDE lands as `coder` (passwordless sudo
+# for typical dev workflows: apt install, system tweaks).
+#
+# We don't pin the UID because the upstream llama.cpp:server-cuda image
+# already ships a UID 1000 user ("ubuntu" on the Ubuntu 24.04 base) -
+# useradd -u 1000 fails as "not unique". UID match with the host doesn't
+# matter for vast.ai (no bind-mounts).
+RUN useradd -m -s /bin/bash coder \
     && echo 'coder ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/coder \
     && chmod 0440 /etc/sudoers.d/coder
 
