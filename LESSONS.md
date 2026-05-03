@@ -453,6 +453,12 @@ The first cert acquisition takes 30-60 s; readiness probes against `https://${DO
 
 duckdns supports only one TXT record value per subdomain at a time. Caddy issues separate certs for the apex block and the wildcard block, so the two ACME DNS-01 challenges run sequentially — the plugin clears the TXT between them. We've seen one transient "TXT did not propagate" retry in the wild but it self-recovers within ~30 s.
 
+### Disable Caddy's TXT-propagation self-check on vast.ai
+
+Caddy's default DNS-challenge flow does a self-check before asking the ACME server to validate: it queries duckdns' authoritative nameservers directly (TCP/53 to e.g. `35.183.157.249`). vast.ai hosts often firewall outbound TCP/53 to specific upstream IPs — the result is `dial tcp 35.183.157.249:53: i/o timeout`, Caddy declares the challenge "not ready," falls through LE-prod → LE-staging → ZeroSSL until one happens to succeed before its timeout. First-launch SSL errors and ~5-10 minute apex-cert acquisition were the symptom.
+
+Fix in `codeserver/Caddyfile.template`: define an `(acme_dns_config)` snippet imported by both site blocks, with `propagation_delay 60s` + `propagation_timeout -1`. The `-1` disables the self-check; the `60s` delay is just enough for duckdns + LE/ZeroSSL to see the same TXT. Cert acquisition becomes deterministic at ~60-90 s instead of "minutes, maybe."
+
 ### Public Suffix List == own rate limit bucket
 
 `duckdns.org` is on the [Public Suffix List](https://publicsuffix.org/list/), so each `*.duckdns.org` subdomain counts as its own "registered domain" for Let's Encrypt rate limiting (50 certs/week, 5 duplicate certs/week). You won't share quota with the rest of the duckdns user base.

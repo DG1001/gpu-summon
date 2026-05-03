@@ -12,13 +12,32 @@
 
 {
     email ${ACME_EMAIL}
-    acme_dns duckdns ${DUCKDNS_TOKEN}
+}
+
+# ACME DNS-01 config snippet -- imported by both site blocks.
+#
+# propagation_timeout -1 disables Caddy's self-check that the TXT record
+# has propagated (the check tries TCP/53 to duckdns' authoritative NS,
+# which vast.ai hosts often firewall -- one of our painful lessons).
+# propagation_delay 60s waits a fixed block instead, then asks the ACME
+# server to validate. duckdns is fast enough that 60s is comfortable.
+#
+# Without this snippet, fresh launches randomly take 5-10 minutes for
+# Caddy to fall through LE-prod -> LE-staging -> ZeroSSL until one
+# happens to succeed within the propagation_timeout window.
+(acme_dns_config) {
+    tls {
+        dns duckdns ${DUCKDNS_TOKEN}
+        propagation_delay 60s
+        propagation_timeout -1
+    }
 }
 
 # Apex: code-server. Caddy's reverse_proxy already forwards X-Forwarded-*
 # headers correctly by default; we only override Host so code-server sees
 # the original (Caddy otherwise rewrites Host to the upstream's address).
 ${DOMAIN} {
+    import acme_dns_config
     reverse_proxy 127.0.0.1:8443 {
         header_up Host {host}
         header_up X-Real-IP {remote_host}
@@ -42,6 +61,8 @@ ${DOMAIN} {
 # `header_regexp Host` matches the raw Host header (port included), unlike
 # the `host` matcher which strips the port.
 *.${DOMAIN} {
+    import acme_dns_config
+
     @llm host llm.${DOMAIN}
     handle @llm {
         reverse_proxy 127.0.0.1:8080
