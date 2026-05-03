@@ -16,11 +16,20 @@ FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System deps + Docker (we ship dockerd, the daemon starts in onstart.sh)
+# System deps + Docker (we ship dockerd, the daemon starts in onstart.sh).
+#
+# vast.ai's /.launch wrapper runs BEFORE our onstart_cmd and tries to apt-install
+# openssh-server / tmux / rsync / software-properties-common at boot time. If
+# the rented host can't reach archive.ubuntu.com (which we have observed in the
+# wild) those installs fail and /.launch loops forever on `ssh: command not
+# found`. We pre-install the lot so /.launch's apt calls become no-ops and the
+# image works regardless of upstream-mirror reachability.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg git gettext-base \
         iptables uidmap fuse-overlayfs \
         netcat-openbsd jq \
+        openssh-server openssh-client openssh-sftp-server \
+        rsync tmux software-properties-common \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
         | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
@@ -53,7 +62,7 @@ COPY Caddyfile.template   /opt/Caddyfile.template
 COPY xares-env.template   /opt/xares-env.template
 RUN chmod +x /opt/onstart.sh
 
-EXPOSE 80 443 8080
+EXPOSE 22 80 443 8080
 
 # vast.ai sets `onstart_cmd` per instance. To keep this image usable both via
 # vast (where the entry comes from create_instance(onstart_cmd=...)) and via a

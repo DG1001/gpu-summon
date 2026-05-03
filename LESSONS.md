@@ -391,6 +391,22 @@ The launcher will use the template's image + onstart, and inject `LLAMA_PARALLEL
 
 The `--with-xares` flow runs llama-server *and* xaresaicoder on the same rented box, fronted by Caddy with a duckdns wildcard cert. Things we learned:
 
+### vast.ai's `/.launch` apt-installs ssh/tmux/rsync at boot
+
+Every vast.ai container is wrapped by a vast-injected `/.launch` script that runs **before** your `onstart_cmd`. It does `apt-get update && apt-get install -y openssh-server tmux rsync software-properties-common` so vast's web-console SSH-button works.
+
+If your image is slim (e.g. `nvidia/cuda:*-runtime-ubuntu22.04`), those packages are not pre-installed. If the rented host can't reach `archive.ubuntu.com` at boot (we observed `Connection failed [IP: 91.189.91.81 80]` on a real launch), apt fails with "held broken packages" — and `/.launch` then enters an infinite loop:
+
+```
+/.launch: line 38: /usr/sbin/sshd: No such file or directory
+/.launch: line 48: ssh: command not found
+[repeats forever]
+```
+
+Your `onstart_cmd` never runs. The container looks "running" to the vast API but is dead.
+
+**Fix:** pre-install the packages in your Dockerfile so `/.launch`'s apt-installs become idempotent no-ops. Specifically: `openssh-server openssh-client openssh-sftp-server rsync tmux software-properties-common`. Cost: ~150 MB of image size. Worth it.
+
 ### DinD on vast.ai is reactive, not filterable
 
 Vast.ai offers don't expose a "supports privileged" flag. We can't preempt hosts that block `--privileged`; we just submit `runtype="ssh_direc ssh_proxy"` and watch the container. If `dockerd` fails to start, the container exits within ~30 s and the launcher destroys + tries the next offer (same retry pattern as `--min-real-mbps`).
