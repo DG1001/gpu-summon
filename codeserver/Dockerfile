@@ -28,7 +28,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # forever on `ssh: command not found`. See LESSONS.md.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg git gettext-base \
-        netcat-openbsd jq sudo \
+        netcat-openbsd jq sudo vim \
         openssh-server openssh-client openssh-sftp-server \
         rsync tmux software-properties-common \
     && rm -rf /var/lib/apt/lists/*
@@ -62,10 +62,13 @@ RUN curl -fsSL https://code-server.dev/install.sh \
 
 # opencode: the user types `opencode` in code-server's terminal and chats
 # with the local llama-server. Installer drops the binary in
-# /root/.opencode/bin -- we symlink to /usr/local/bin so it's on PATH for
-# any shell (code-server's terminals open as root in the container).
+# /root/.opencode/bin/ -- but /root is mode 0700, unreachable by `coder`,
+# so a symlink would be a dangling pointer for the IDE user. Copy the
+# binary to /usr/local/bin instead so any user can execute it.
 RUN curl -fsSL https://opencode.ai/install | bash \
-    && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode \
+    && cp /root/.opencode/bin/opencode /usr/local/bin/opencode \
+    && chmod 755 /usr/local/bin/opencode \
+    && rm -rf /root/.opencode \
     && opencode --version
 
 # llama-server binary + libs are already at /app from the base image.
