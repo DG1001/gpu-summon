@@ -249,7 +249,8 @@ We originally tried Docker-in-Docker for full per-project workspace isolation bu
 
 ## Roadmap
 
-- [ ] Pluggable GPU marketplace backends (RunPod, Lambda, Salad)
+- [ ] **TensorDock backend (next priority)**. Their KVM-VM model gives a real public IP with port 443 free, and allows `--privileged` containers — this unblocks two pain points we hit on vast.ai: (1) the random host-port suffix that VS Code's Ports tab strips, and (2) Docker-in-Docker, which would let us bring back the original full xaresaicoder per-project workspace isolation as a `--with-xares` mode alongside `--with-codeserver`.
+- [ ] Provider abstraction layer in `summon.py` (vast/TensorDock/RunPod/Lambda as pluggable backends sharing the same CLI surface)
 - [ ] Optional vLLM / SGLang backends alongside llama.cpp
 - [ ] Native CLI entry point (`gpu-summon` instead of `python summon.py`)
 - [x] Optional reverse proxy with TLS termination (`--with-codeserver` ships with Caddy + duckdns wildcard cert)
