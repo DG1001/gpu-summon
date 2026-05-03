@@ -68,7 +68,12 @@ disown || true
 #    default project directory the user lands in. Runs as `coder` so the
 #    browser terminal isn't root (sudo without password if needed).
 log "starting code-server as coder (PASSWORD=set, bind 127.0.0.1:8443)"
-sudo -u coder env PASSWORD="$CODESERVER_PASSWORD" setsid nohup code-server \
+# HOME explicit: 'sudo -H' is overridden by sudoers' env_keep += HOME on the
+# upstream image, so HOME stays /root and code-server tries to mkdir
+# /root/.config/code-server (EACCES, instant crash). Setting HOME via env
+# bypasses sudo's env_keep policy and points code-server at /home/coder.
+sudo -u coder env HOME=/home/coder PASSWORD="$CODESERVER_PASSWORD" \
+    setsid nohup code-server \
     --bind-addr 127.0.0.1:8443 \
     --auth password \
     --disable-telemetry \
