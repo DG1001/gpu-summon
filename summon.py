@@ -926,6 +926,66 @@ def cmd_list(vast: VastAI) -> None:
               f"label={i.get('label', '-')}")
 
 
+def cmd_ssh(vast: VastAI, instance_id: int) -> None:
+    """Hängt einen SSH-Key an die Instance und exec'd in eine interaktive
+    SSH-Session. Convenience zum Debuggen (Logs lesen, Modell-Download
+    checken, Caddy/llama-server inspizieren).
+
+    Reuses den gpu_summon_smoketest Key. Wenn der Key noch nicht
+    angelegt ist, wird er hier angelegt. attach_ssh ist idempotent (das
+    'already attached' Failure-Mode kommt vor und ist OK).
+
+    os.execvp ersetzt den Python-Prozess durch ssh, damit der User eine
+    echte interaktive Shell kriegt (TTY, signals, ...) statt einer
+    subprocess.run-Wraperei.
+    """
+    try:
+        inst_raw = vast.show_instance(id=instance_id)
+        if isinstance(inst_raw, str):
+            inst_raw = json.loads(inst_raw)
+        inst = inst_raw.get("instances", inst_raw)
+        if isinstance(inst, list):
+            inst = inst[0] if inst else {}
+    except Exception as e:
+        print(f"FEHLER: konnte Instance {instance_id} nicht lesen: {e}")
+        sys.exit(2)
+
+    ip = inst.get("public_ipaddr") or inst.get("ssh_host")
+    ssh_port = get_ssh_port(inst)
+    status = inst.get("actual_status") or inst.get("cur_state") or "?"
+    if not ip or not ssh_port:
+        print(f"FEHLER: kein SSH-Endpoint fuer Instance {instance_id} "
+              f"(Status: {status}). Vielleicht noch nicht hochgefahren?")
+        sys.exit(2)
+
+    pub, priv = ensure_smoketest_keypair()
+
+    try:
+        r = vast.attach_ssh(instance_id=instance_id, ssh_key=pub)
+        if isinstance(r, str):
+            r = json.loads(r)
+        if (not r.get("success") and
+                "already" not in str(r.get("msg", "")).lower()):
+            print(f"[ssh]  WARN attach_ssh: {r}")
+    except Exception as e:
+        print(f"[ssh]  WARN: attach_ssh fehlgeschlagen ({e}); "
+              f"trotzdem Verbindung versuchen...")
+
+    print(f"[ssh]  ssh -i {priv} -p {ssh_port} root@{ip}")
+    print()
+    # execvp ersetzt diesen Python-Prozess durch ssh -- echte interaktive
+    # Shell mit TTY, signal handling etc.
+    os.execvp("ssh", [
+        "ssh",
+        "-i", priv,
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "LogLevel=ERROR",
+        "-p", str(ssh_port),
+        f"root@{ip}",
+    ])
+
+
 def cmd_launch(args, vast: VastAI) -> None:
     # code-server-Mode: zwingt backend=codeserver, validiert Pflicht-Inputs,
     # generiert das Workspace-Passwort. Muss VOR dem Backend-Lookup passieren.
@@ -1243,6 +1303,12 @@ def main():
     action = p.add_mutually_exclusive_group()
     action.add_argument("--list", action="store_true")
     action.add_argument("--destroy", type=int, metavar="ID")
+    action.add_argument("--ssh", type=int, metavar="ID",
+                        help="SSH-Login auf eine laufende Instance. Erzeugt "
+                             "(falls noetig) den gpu-summon-smoketest-Key, "
+                             "haengt ihn an die Instance an und exec'd in "
+                             "eine interaktive Shell. Praktisch zum Logs-"
+                             "Lesen / Debuggen einer laufenden Box.")
     action.add_argument("--debug", action="store_true",
                         help="Probiert progressiv strengere Queries und zeigt "
                              "wo die Trefferzahl auf 0 faellt.")
@@ -1383,6 +1449,8 @@ def main():
         cmd_list(vast)
     elif args.destroy:
         cmd_destroy(vast, args.destroy, duckdns_token=args.duckdns_token)
+    elif args.ssh:
+        cmd_ssh(vast, args.ssh)
     elif args.debug:
         cmd_debug(args, vast)
     else:
