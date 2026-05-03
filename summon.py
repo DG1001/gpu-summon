@@ -405,8 +405,17 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
         )
     if isinstance(result, str):
         result = json.loads(result)
+    # Vast-Quirk: manchmal kommt {success: False, new_contract: N,
+    # instance_api_key: ...} zurueck, obwohl die Instance tatsaechlich
+    # erstellt wurde. Wenn new_contract da ist nehmen wir das als
+    # Erfolg (sonst kriegen wir Orphan-Instances die kostenpflichtig
+    # weiterlaufen).
     if not result.get("success"):
-        raise RuntimeError(f"create_instance fehlgeschlagen: {result}")
+        if result.get("new_contract"):
+            print(f"[create] vast-Quirk: success=False mit new_contract="
+                  f"{result['new_contract']} - akzeptiere als erstellt.")
+        else:
+            raise RuntimeError(f"create_instance fehlgeschlagen: {result}")
 
     instance_id = result["new_contract"]
     print(f"[create] Instance ID: {instance_id}")
@@ -721,12 +730,6 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
 
 DUCKDNS_UPDATE_URL = "https://www.duckdns.org/update"
 
-# Wieviele Offers wir maximal verbrennen wollen um den Standard-Port 443 zu
-# kriegen, bevor wir uns mit einem Random-Host-Port zufrieden geben (URLs
-# bekommen dann ":<port>" mitgeschrieben). 3 = pragmatisch, kostet im worst
-# case ~$0.04 (Container-up + sofort destroy ist sub-minute).
-PORT_443_RETRY_LIMIT = 3
-
 
 def update_duckdns(subdomain: str, token: str, ip: str | None = None) -> bool:
     """Setzt den A-Record subdomain.duckdns.org. ip=None bewirkt einen Reset
@@ -1017,7 +1020,6 @@ def cmd_launch(args, vast: VastAI) -> None:
     instance_id = None
     inst = None
     chosen_offer = None
-    port_443_misses = 0  # zaehlt Offers wo der vast-Host 443 belegt hatte
 
     for attempt, offer in enumerate(offers, 1):
         print(f"\n[try]   Versuch {attempt}/{len(offers)}: "
@@ -1051,34 +1053,16 @@ def cmd_launch(args, vast: VastAI) -> None:
             instance_id = None
             continue
 
-        # Bei --with-codeserver: Vast.ai mappt -p 443:443 nur dann auf Host-
-        # Port 443 wenn der vast-Host das nicht selbst belegt. Wenn nicht,
-        # kriegen wir einen Random-Port wie 44140 - dann landet
-        # https://${DOMAIN}/ (ohne Port) auf vasts Service, NICHT bei Caddy.
-        # Strategie: bis zu PORT_443_RETRY_LIMIT Offers verbrennen um 443
-        # zu kriegen; danach Random-Port akzeptieren und :PORT in URLs
-        # einbauen.
+        # Bei --with-codeserver: vast.ai-Hosts haben Port 443 quasi immer
+        # selbst belegt (eigener Web-Proxy). Wir akzeptieren den Random-Port
+        # den vast uns gibt und schreiben ihn in alle URLs. Frueher haben
+        # wir bis zu 3 Offers durchprobiert - lohnt nicht, kostet nur Zeit
+        # und Geld.
         if args.with_codeserver:
             _, host_port = get_endpoint(inst, args.backend)
             if host_port != 443:
-                port_443_misses += 1
-                if (port_443_misses < PORT_443_RETRY_LIMIT and
-                        attempt < len(offers)):
-                    print(f"[code]   vast-Host hat Port 443 belegt "
-                          f"(zugewiesen: host_port={host_port}). Probiere "
-                          f"naechsten Offer ({port_443_misses}/"
-                          f"{PORT_443_RETRY_LIMIT})...")
-                    try:
-                        vast.destroy_instance(id=instance_id)
-                    except Exception:
-                        pass
-                    instance_id = None
-                    continue
-                else:
-                    print(f"[code]   WARN: kein Offer mit freiem 443 in "
-                          f"Top-{len(offers)} gefunden. Akzeptiere "
-                          f"host_port={host_port} - URLs enthalten den "
-                          f"Port (z.B. https://{code_domain}:{host_port}).")
+                print(f"[code]   host_port={host_port} (vast-Host hat 443 "
+                      f"belegt) - URLs werden mit ':{host_port}' versehen.")
 
         if args.min_real_mbps > 0:
             ip, _port = get_endpoint(inst, args.backend)

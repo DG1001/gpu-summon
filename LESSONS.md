@@ -457,13 +457,13 @@ duckdns supports only one TXT record value per subdomain at a time. Caddy issues
 
 `duckdns.org` is on the [Public Suffix List](https://publicsuffix.org/list/), so each `*.duckdns.org` subdomain counts as its own "registered domain" for Let's Encrypt rate limiting (50 certs/week, 5 duplicate certs/week). You won't share quota with the rest of the duckdns user base.
 
-### Port 443 conflicts on the vast host
+### Port 443 is essentially never free on vast.ai hosts
 
-Vast.ai instances are containers; mapping `-p 443:443` only works if the underlying host has port 443 free. Most don't — vast hosts often run their own service (web management or SSH proxy) on 443. The container's port 443 then gets mapped to a random host port like 44140, which is NOT the same as failing.
+Vast.ai instances are containers; mapping `-p 443:443` only works if the underlying host has port 443 free. **In practice, vast hosts essentially never do** — the host runs its own web service on 443 (vast-internal management or SSH proxy). We tried 4+ offers in a row across different geographies; none gave host_port=443 for container 443. Same for 80 and 8080.
 
-Symptom: `wait_until_running` reports `'443/tcp'` in the port set, but `inst['ports']['443/tcp'][0]['HostPort']` is some random number. `https://${DOMAIN}/` (default port 443) lands on vast's own service, not your Caddy. `https://${DOMAIN}:44140/` works but is ugly.
+So the container's port 443 always gets mapped to a random host port like 44140. `https://${DOMAIN}/` (default port 443) lands on vast's own service, not your Caddy. The launcher accepts this and bakes `:PORT` into all user-facing URLs (FERTIG output, opencode config, readiness probes). Bookmark with the port; one minor uglyness for an otherwise working setup.
 
-The launcher handles this in `cmd_launch` for `--with-codeserver`: try `PORT_443_RETRY_LIMIT=3` offers; if none gives host_port=443, accept the random port and bake `:PORT` into all user-facing URLs (FERTIG output, opencode config, readiness probes). Same pattern as `--min-real-mbps` retry. The same applies to ports 80 and 8080 — but they're less user-facing so we don't gate on them.
+Earlier the launcher tried `PORT_443_RETRY_LIMIT=3` offers hoping one would have :443 free. We removed that retry — burns ~$0.05 per attempt × ~3min × 3 attempts for ~0% chance of success.
 
 ### Disk math for `--with-codeserver`
 
