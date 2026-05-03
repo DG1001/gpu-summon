@@ -28,6 +28,17 @@
 
 {
     email ${ACME_EMAIL}
+    # Force ZeroSSL as the primary (and only) ACME CA. Caddy's default
+    # is Let's Encrypt with ZeroSSL as fallback, but Caddy stays in LE
+    # retry-backoff for up to 30 days before falling through -- which
+    # bricks every launch once the LE 5-duplicate-certs/week limit is
+    # hit (it's per identifier-set and the same xaicoder.duckdns.org +
+    # *.xaicoder.duckdns.org pair gets reissued each launch). ZeroSSL
+    # has its own limits but they're per-account and we provision a
+    # fresh account auto-EAB on each container -- no shared bucket.
+    # Caddy has a special case in CertMagic that auto-fetches EAB
+    # credentials when the CA URL is acme.zerossl.com.
+    acme_ca https://acme.zerossl.com/v2/DV90
 }
 
 # Single wildcard site block. All routes dispatched by host matcher.
