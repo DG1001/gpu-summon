@@ -39,6 +39,44 @@ python summon.py --list
 python summon.py --destroy <id>
 ```
 
+### Inside the instance (after `--ssh`)
+
+You're root in the rented container. The most useful spots:
+
+```bash
+# Model download progress (if it's still downloading)
+ls -lh /workspace/hf_cache/hub/models--*/blobs/
+stat -c%s /workspace/hf_cache/hub/models--*/blobs/*.downloadInProgress 2>/dev/null
+# (no .downloadInProgress file = download finished)
+
+# llama-server log: model load, requests, errors
+tail -f /var/log/llama-server.log
+
+# What's running, what's listening
+pgrep -af 'llama-server|code-server|caddy' | grep -v grep
+cat /proc/net/tcp /proc/net/tcp6 | grep ' 0A '   # listeners (ss/netstat are absent in slim images)
+
+# GPU usage
+nvidia-smi
+```
+
+For `--with-codeserver` boxes (extra components):
+
+```bash
+# Caddy: TLS / ACME / routing
+tail -f /var/log/caddy.log
+cat /etc/caddy/Caddyfile          # rendered config
+
+# code-server: IDE startup / errors
+tail -f /var/log/code-server.log
+
+# onstart.sh: how far did boot get?
+cat /var/log/onstart.log
+```
+
+Manual `llama-server` restart with different flags (rare):
+see [LESSONS.md § Manual llama-server restart](LESSONS.md#manual-llama-server-restart) — env (`LD_LIBRARY_PATH=/app`, `HF_HOME=/workspace/hf_cache`) and `setsid nohup` matter.
+
 The launch prints the endpoint URL + API key and writes `~/.config/opencode/opencode.json` + `~/.local/share/opencode/auth.json`. Run `opencode` and you're chatting with your own GPU.
 
 ## Features

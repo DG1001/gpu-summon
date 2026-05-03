@@ -39,6 +39,44 @@ python summon.py --list
 python summon.py --destroy <id>
 ```
 
+### Innen in der Instanz (nach `--ssh`)
+
+Du bist root im gemieteten Container. Wichtigste Stellen:
+
+```bash
+# Modell-Download-Fortschritt (falls noch laed)
+ls -lh /workspace/hf_cache/hub/models--*/blobs/
+stat -c%s /workspace/hf_cache/hub/models--*/blobs/*.downloadInProgress 2>/dev/null
+# (kein .downloadInProgress mehr = Download fertig)
+
+# llama-server-Log: Model-Load, Requests, Errors
+tail -f /var/log/llama-server.log
+
+# Was laeuft, was lauscht?
+pgrep -af 'llama-server|code-server|caddy' | grep -v grep
+cat /proc/net/tcp /proc/net/tcp6 | grep ' 0A '   # Listener (ss/netstat fehlen in schlanken Images)
+
+# GPU-Auslastung
+nvidia-smi
+```
+
+Bei `--with-codeserver`-Boxen (Zusatz-Komponenten):
+
+```bash
+# Caddy: TLS / ACME / Routing
+tail -f /var/log/caddy.log
+cat /etc/caddy/Caddyfile          # gerenderte Config
+
+# code-server: IDE-Startup / Errors
+tail -f /var/log/code-server.log
+
+# onstart.sh: wie weit ist Boot gekommen?
+cat /var/log/onstart.log
+```
+
+Manueller `llama-server`-Restart mit anderen Flags (selten):
+siehe [LESSONS.md § Manual llama-server restart](LESSONS.md#manual-llama-server-restart) — env (`LD_LIBRARY_PATH=/app`, `HF_HOME=/workspace/hf_cache`) und `setsid nohup` sind kritisch.
+
 Der Launch druckt Endpoint + API-Key und schreibt `~/.config/opencode/opencode.json` + `~/.local/share/opencode/auth.json`. `opencode` starten — fertig.
 
 ## Features
