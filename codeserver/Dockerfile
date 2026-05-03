@@ -12,10 +12,12 @@
 # Built and pushed by the maintainer via codeserver/build-and-push.sh
 # (or the build-codeserver-image.yml GitHub Actions workflow).
 
+# Use the upstream llama.cpp image as the base directly. Its base distro
+# (currently Ubuntu 24.04, GLIBC 2.39) is the one llama-server was compiled
+# against -- mixing in a slimmer Ubuntu 22.04 nvidia/cuda image causes
+# "GLIBC_2.38 not found" load-time failures (we paid for that lesson).
 ARG LLAMACPP_VERSION=server-cuda
-FROM ghcr.io/ggml-org/llama.cpp:${LLAMACPP_VERSION} AS llamacpp
-
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+FROM ghcr.io/ggml-org/llama.cpp:${LLAMACPP_VERSION}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -54,10 +56,8 @@ RUN curl -fsSL https://opencode.ai/install | bash \
     && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode \
     && opencode --version
 
-# llama-server binary + libs from the upstream image. Keep the same paths
-# the existing self-contained backend expects (/app + LD_LIBRARY_PATH=/app).
-COPY --from=llamacpp /app /app
-
+# llama-server binary + libs are already at /app from the base image.
+# Set the same env the existing self-contained backend assumes.
 ENV LD_LIBRARY_PATH=/app
 ENV HF_HOME=/workspace/hf_cache
 

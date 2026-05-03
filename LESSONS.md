@@ -430,6 +430,17 @@ Your `onstart_cmd` never runs. The container looks "running" to the vast API but
 
 **Fix:** pre-install the packages in your Dockerfile so `/.launch`'s apt-installs become idempotent no-ops. Specifically: `openssh-server openssh-client openssh-sftp-server rsync tmux software-properties-common`. Cost: ~150 MB of image size. Worth it.
 
+### llama-server binaries need their build-time GLIBC
+
+The `ghcr.io/ggml-org/llama.cpp:server-cuda` image ships `llama-server` compiled against the GLIBC of its own base distro (currently Ubuntu 24.04 = GLIBC 2.39, also `GLIBCXX_3.4.32`). Copying just `/app` over to a slimmer `nvidia/cuda:*-runtime-ubuntu22.04` (GLIBC 2.35) image makes the binary fail to load with:
+
+```
+/app/llama-server: /usr/lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found
+/app/llama-server: /usr/lib/x86_64-linux-gnu/libstdc++.so.6: version `GLIBCXX_3.4.32' not found
+```
+
+The container appears healthy (other processes start), llama-server silently never comes up, and any readiness probe against its port hangs forever. Fix: use `ghcr.io/ggml-org/llama.cpp:server-cuda` as the **base** (FROM), not as a stage to copy from. The CUDA + glibc combination is then guaranteed compatible.
+
 ### duckdns supports wildcards (verified empirically)
 
 Any `*.<your-name>.duckdns.org` resolves to the same A record as `<your-name>.duckdns.org`. Not documented in their FAQ but works in practice — `nslookup llm.xaicoder.duckdns.org` returned the same A as the apex during a real launch. One duckdns subdomain is enough for both `${DOMAIN}` and `llm.${DOMAIN}`.
