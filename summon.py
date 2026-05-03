@@ -1177,7 +1177,7 @@ def cmd_launch(args, vast: VastAI) -> None:
     print("WICHTIG - Aufraeumen wenn fertig (sonst laeuft die Stundenuhr!):")
     if args.with_xares:
         print(f"  python {sys.argv[0]} --destroy {instance_id} \\")
-        print(f"      --duckdns-token $DUCKDNS_TOKEN  # raeumt auch DNS auf")
+        print("      --duckdns-token $DUCKDNS_TOKEN  # raeumt auch DNS auf")
     else:
         print(f"  python {sys.argv[0]} --destroy {instance_id}")
     print("="*60)
