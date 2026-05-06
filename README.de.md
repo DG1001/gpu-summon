@@ -5,6 +5,8 @@ Ein Kommando um einen self-hosted [llama.cpp](https://github.com/ggml-org/llama.
 GPU-Marketplace-Anbindung: aktuell [vast.ai](https://vast.ai). Architektur ist so ausgelegt dass weitere Anbieter (RunPod, Lambda, Salad, …) ergaenzt werden koennen ohne dass die UX des Launchers sich aendert.
 
 > Sprachen: [English](README.md) · **Deutsch** · [LESSONS.md](LESSONS.md) (Tiefgang)
+>
+> Folien: [Lokale LLMs auf gemieteten GPUs](gpu-summon-recap.pdf) — Demo-Recap JUG Stuttgart 2026 (16 Folien)
 
 ## Was es macht
 

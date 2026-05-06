@@ -5,6 +5,8 @@ One command to summon a self-hosted [llama.cpp](https://github.com/ggml-org/llam
 GPU marketplace integration: currently [vast.ai](https://vast.ai). Designed so other providers (RunPod, Lambda, Salad, …) can be added without changing the launcher's UX.
 
 > Languages: **English** · [Deutsch](README.de.md) · [LESSONS.md](LESSONS.md) (deep dive)
+>
+> Slides: [Lokale LLMs auf gemieteten GPUs](gpu-summon-recap.pdf) — JUG Stuttgart 2026 demo recap (German, 16 slides)
 
 ## What this does
 
