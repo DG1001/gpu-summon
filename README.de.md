@@ -8,6 +8,8 @@ GPU-Marketplace-Anbindung: aktuell [vast.ai](https://vast.ai). Architektur ist s
 >
 > Folien: [Lokale LLMs auf gemieteten GPUs](gpu-summon-recap.pdf) — Demo-Recap JUG Stuttgart 2026 (16 Folien)
 
+![demo](demo.gif)
+
 ## Was es macht
 
 - Mietet eine Cloud-GPU und startet `llama-server` darauf mit einem GGUF-Modell deiner Wahl (Default: Unsloth Qwen3.6-27B Q5_K_XL)

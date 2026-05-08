@@ -8,6 +8,8 @@ GPU marketplace integration: currently [vast.ai](https://vast.ai). Designed so o
 >
 > Slides: [Lokale LLMs auf gemieteten GPUs](gpu-summon-recap.pdf) — JUG Stuttgart 2026 demo recap (German, 16 slides)
 
+![demo](demo.gif)
+
 ## What this does
 
 - Rents a cloud GPU and runs `llama-server` on it with any GGUF model (default: Unsloth's Qwen3.6-27B Q5_K_XL)
