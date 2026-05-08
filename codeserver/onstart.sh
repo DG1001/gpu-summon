@@ -41,7 +41,7 @@ require LLAMA_API_KEY
 require CODESERVER_PASSWORD
 
 mkdir -p /var/log /etc/caddy /workspace/hf_cache /workspace/projects
-# /workspace/projects gehoert dem coder-User (code-server laeuft als coder).
+# /workspace/projects belongs to the coder user (code-server runs as coder).
 chown -R coder:coder /workspace/projects 2>/dev/null || true
 
 # 1) llama-server. Same flags as the standalone llamacpp backend.
@@ -163,8 +163,8 @@ chown coder:coder /workspace/projects/AGENTS.md
     rm -f /tmp/models.json
 
     log "[opencode-cfg] writing config (model=$MODEL_ID)"
-    # Config-Dateien fuer den coder-User schreiben (code-server-Terminal
-    # landet als coder), Ownership korrigieren.
+    # Write config files for the coder user (code-server terminal opens
+    # as coder), then fix ownership.
     mkdir -p /home/coder/.config/opencode /home/coder/.local/share/opencode
 
     cat > /home/coder/.config/opencode/opencode.json <<JSON

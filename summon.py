@@ -45,34 +45,34 @@ import requests
 try:
     from vastai import VastAI
 except ImportError:
-    print("FEHLER: vastai SDK nicht installiert. Bitte: pip install vastai")
+    print("ERROR: vastai SDK not installed. Run: pip install vastai")
     sys.exit(1)
 
 
 # -----------------------------------------------------------------------------
-# Backend-Definitionen
+# Backend definitions
 # -----------------------------------------------------------------------------
 
-# Stand April 2026 - CUDA 13.2 hat einen bekannten Bug der bei vielen Modellen
-# (insbesondere Qwen3.6) Gibberish-Output produziert. Wir filtern das aktiv aus.
+# As of April 2026, CUDA 13.2 has a known bug that produces gibberish output
+# with many models (especially Qwen3.6). We actively filter it out.
 CUDA_BLACKLIST = ["13.2"]
-CUDA_MIN_GOOD = 12.0      # niedriger geht aber FP8/Flash-Attn will 12.0+
+CUDA_MIN_GOOD = 12.0      # lower works, but FP8/Flash-Attn wants 12.0+
 
 BACKENDS = {
     "llamacpp": {
-        # Offizielles llama.cpp CUDA Server Image
+        # Official llama.cpp CUDA server image
         "image": "ghcr.io/ggml-org/llama.cpp:server-cuda",
         "exposed_port": 8080,
         "api_path": "/v1",
         "default_model": "unsloth/Qwen3.6-27B-GGUF:UD-Q5_K_XL",
-        # Wichtig: --jinja fuer tool calling (opencode), --chat-template-kwargs
-        # fuer Qwen3.6 Preserved Thinking, plus Sampling-Defaults von Unsloth
-        # ctx-size ist GESAMT-Budget, nicht pro-Slot. Bei parallel=N kriegt
-        # jeder Slot ctx-size/N. Default 65536 + parallel=4 -> 16k pro User,
-        # reicht fuer normale Chat-Konversationen.
-        # --api-key sichert das Endpoint per Bearer-Token. Ohne Key ist
-        # llama-server PUBLIC erreichbar - jeder mit IP:PORT kann inferieren
-        # auf deine Rechnung. {API_KEY} wird vom Skript injected.
+        # Important: --jinja for tool calling (opencode), --chat-template-kwargs
+        # for Qwen3.6 Preserved Thinking, plus Unsloth's sampling defaults.
+        # ctx-size is the TOTAL budget, not per-slot. With parallel=N each
+        # slot gets ctx-size/N. Default 65536 + parallel=4 -> 16k per user,
+        # which is enough for normal chat conversations.
+        # --api-key secures the endpoint via Bearer token. Without a key,
+        # llama-server is reachable PUBLICLY - anyone with IP:PORT can run
+        # inference on your bill. {API_KEY} is injected by the script.
         "onstart_template": (
             "/app/llama-server "
             "-hf {MODEL} "
@@ -106,42 +106,42 @@ BACKENDS = {
         "ready_check": "http://{host}:{port}/api/tags",
         "disk_gb_min": 60,
     },
-    # code-server: llama-server + browserbasiertes VS Code (code-server) +
-    # Caddy mit duckdns-Wildcard-TLS. Alles laeuft als Host-Prozess - KEIN
-    # Docker-in-Docker, weil vast.ai Standard-Offers --privileged nicht
-    # erlauben (siehe LESSONS.md "vast.ai forbids privileged mode").
-    # Nicht direkt via --backend waehlbar - aktiviert sich ueber --with-codeserver.
+    # code-server: llama-server + browser-based VS Code (code-server) +
+    # Caddy with duckdns wildcard TLS. Everything runs as a host process -
+    # NO Docker-in-Docker, because vast.ai's standard offers don't allow
+    # --privileged (see LESSONS.md "vast.ai forbids privileged mode").
+    # Not selectable via --backend - activated through --with-codeserver.
     "codeserver": {
         "image": "ghcr.io/dg1001/gpu-summon-codeserver:latest",
-        "exposed_port": 443,        # Caddy/HTTPS - das User-Facing-Endpoint
-        "extra_ports": [8080, 80],  # 8080: direkter LLM (Legacy + opencode)
-                                    # 80:   ACME HTTP-Fallback, ungenutzt aber harmlos
+        "exposed_port": 443,        # Caddy/HTTPS - the user-facing endpoint
+        "extra_ports": [8080, 80],  # 8080: direct LLM (legacy + opencode)
+                                    # 80:   ACME HTTP fallback, unused but harmless
         "api_path": "/v1",
         "default_model": "unsloth/Qwen3.6-27B-GGUF:UD-Q5_K_XL",
-        # /opt/onstart.sh ist im Image als CMD gesetzt, vast erwartet aber
-        # explizites onstart_cmd. Output in Datei damit via SSH debugbar.
+        # /opt/onstart.sh is set as CMD in the image, but vast expects an
+        # explicit onstart_cmd. Output to a file so it's debuggable via SSH.
         "onstart_template": "/opt/onstart.sh > /var/log/onstart.log 2>&1",
-        # code-server's Login-Page antwortet ohne Auth mit 200 (HTML), daher
-        # eignet sich der Apex direkt als Readiness-Check. Validiert in einem
-        # Rutsch: duckdns-DNS + Caddy-Cert + Caddy-Routing + code-server up.
+        # code-server's login page returns 200 (HTML) without auth, so the
+        # apex itself works as a readiness check. Validates in one shot:
+        # duckdns DNS + Caddy cert + Caddy routing + code-server up.
         "ready_check": "https://{domain}/",
-        "disk_gb_min": 60,          # llama-cache + code-server + Marge
+        "disk_gb_min": 60,          # llama cache + code-server + margin
     },
 }
 
 
 # -----------------------------------------------------------------------------
-# Offer-Suche
+# Offer search
 # -----------------------------------------------------------------------------
 
 def _run_search(vast: VastAI, query: str, verbose: bool = True,
                 cuda_min: float = 12.0) -> list:
-    """Helper: fuehrt Query aus und gibt gefilterte Offers-Liste zurueck.
+    """Helper: runs the query and returns a filtered offers list.
 
-    CUDA-Filterung passiert hier Python-side, NICHT in der Query.
-    Grund: vast.ai vergleicht cuda_max_good in der Query teils lexikalisch
-    (String), wodurch '12.10' faelschlich kleiner als '12.4' ist und
-    legitime Hosts rausfallen. Floats vergleichen sich Python-side korrekt.
+    CUDA filtering happens Python-side, NOT in the query. Reason:
+    vast.ai compares cuda_max_good in queries partially lexicographically
+    (as strings), so '12.10' is falsely smaller than '12.4' and legitimate
+    hosts get dropped. Floats compare correctly Python-side.
     """
     if verbose:
         print(f"[search] Query: {query}")
@@ -152,20 +152,20 @@ def _run_search(vast: VastAI, query: str, verbose: bool = True,
             limit="30",
         )
     except Exception as e:
-        print(f"[search] FEHLER bei search_offers: {e}")
+        print(f"[search] ERROR in search_offers: {e}")
         return []
     if isinstance(result, str):
         try:
             result = json.loads(result)
         except json.JSONDecodeError:
-            print(f"[search] Konnte Antwort nicht parsen: {result[:200]}")
+            print(f"[search] Could not parse response: {result[:200]}")
             return []
     raw = result.get("offers", []) if isinstance(result, dict) else result
 
     if verbose and raw:
-        print(f"[search]   -> {len(raw)} rohe Treffer von der API")
+        print(f"[search]   -> {len(raw)} raw hits from the API")
 
-    # CUDA-Filterung Python-side: min Version + 13.2 Blacklist
+    # CUDA filtering Python-side: min version + 13.2 blacklist
     def cuda_ok(o):
         try:
             cv = float(o.get("cuda_max_good", 0))
@@ -175,7 +175,7 @@ def _run_search(vast: VastAI, query: str, verbose: bool = True,
 
     filtered = [o for o in raw if cuda_ok(o)]
     if verbose and len(raw) != len(filtered):
-        print(f"[search]   -> {len(filtered)} nach CUDA-Filter "
+        print(f"[search]   -> {len(filtered)} after CUDA filter "
               f"(min {cuda_min}, blacklist {CUDA_BLACKLIST})")
     return filtered
 
@@ -190,23 +190,23 @@ def find_best_offers(vast: VastAI, *,
                     cuda_min: float = 12.0,
                     verbose: bool = True) -> list[dict]:
     """
-    Sucht passende GPU mit Filter "preisguenstig aber stabil".
+    Find a matching GPU with a "cheap but stable" filter.
 
-    Stolperfallen die hier umgangen werden:
-    - 'reliability' im Query, 'reliability2' im Response (vast.ai Inkonsistenz)
-    - gpu_ram in der QUERY ist GB (Float erlaubt), im RESPONSE aber MB.
-      Wer hier 30000 schreibt sucht nach Karten mit 30 TB VRAM -> 0 Treffer.
-    - gpu_ram nominal vs reserved: 32GB-Karten melden oft 32510 statt 32768
-    - cuda_max_good in Query vergleicht teils lexikalisch -> Python-side filtern
-    - CUDA 13.2 produziert Gibberish bei Qwen3.6 -> blacklist
+    Pitfalls handled here:
+    - 'reliability' in the query, 'reliability2' in the response (vast.ai inconsistency)
+    - gpu_ram in the QUERY is GB (float allowed), but MB in the RESPONSE.
+      Writing 30000 here would search for cards with 30 TB VRAM -> 0 hits.
+    - gpu_ram nominal vs reserved: 32GB cards often report 32510 instead of 32768
+    - cuda_max_good in queries compares partially lexicographically -> filter Python-side
+    - CUDA 13.2 produces gibberish on Qwen3.6 -> blacklist
     """
-    # Query: GB (Float), mit 7% Puffer fuer Karten die etwas weniger melden
+    # Query: GB (float), with 7% buffer for cards that report slightly less
     gpu_ram_query_threshold = round(min_vram_gb * 0.93, 2)
-    # Post-Filter: MB, strikter (5% Puffer) gegen den Response
+    # Post-filter: MB, stricter (5% buffer) against the response
     gpu_ram_real_threshold = int(min_vram_gb * 1000 * 0.95)
 
-    # inet_down_cost gehoert zu base: ist Kostenbegrenzung wie dph_total.
-    # Manche Hosts verlangen $0.04/GB - bei 25 GB Modell-Pull schon $1.
+    # inet_down_cost belongs in base: it's a cost cap like dph_total.
+    # Some hosts charge $0.04/GB - already $1 on a 25 GB model pull.
     base_filters = [
         f"gpu_ram>={gpu_ram_query_threshold}",
         f"dph_total<={max_dph}",
@@ -225,7 +225,7 @@ def find_best_offers(vast: VastAI, *,
         base_filters.append(f'geolocation={region}')
 
     def post_filter(offers: list) -> list:
-        """Python-side: zu kleine GPU-RAM Karten rauswerfen."""
+        """Python-side: drop cards with too little GPU RAM."""
         return [o for o in offers
                 if o.get("gpu_ram", 0) >= gpu_ram_real_threshold]
 
@@ -233,39 +233,39 @@ def find_best_offers(vast: VastAI, *,
         query = " ".join(filters)
         return post_filter(_run_search(vast, query, verbose, cuda_min=cuda_min))
 
-    # Versuch 1: alle Filter
+    # Attempt 1: all filters
     offers = search(base_filters + quality_filters)
     if verbose and offers:
-        print(f"[search] Versuch 1: {len(offers)} Treffer nach allen Filtern")
+        print(f"[search] Attempt 1: {len(offers)} hits after all filters")
 
-    # Versuch 2: ohne Bandbreiten/Port-Filter
+    # Attempt 2: without bandwidth/port filters
     if not offers:
         if verbose:
-            print("[search] Keine Treffer - lockere inet_down/direct_port...")
+            print("[search] No hits - relaxing inet_down/direct_port...")
         relaxed = [f for f in quality_filters
                    if not f.startswith(("inet_down", "direct_port_count"))]
         offers = search(base_filters + relaxed)
 
-    # Versuch 3: nur Basis + verified
+    # Attempt 3: only base + verified
     if not offers:
         if verbose:
-            print("[search] Immer noch nichts - nur verified+rentable...")
+            print("[search] Still nothing - only verified+rentable...")
         offers = search(base_filters + ["verified=true"])
 
-    # Versuch 4: alle Filter weg, nur Basis
+    # Attempt 4: drop all filters, only base
     if not offers:
         if verbose:
-            print("[search] Letzter Versuch - nur Basis-Filter...")
+            print("[search] Last attempt - only base filters...")
         offers = search(base_filters)
 
     if not offers:
-        print("[search] Keine passenden Offers gefunden.")
-        print("         Tipp: --max-price erhoehen, --min-vram senken, "
-              "oder --region weglassen.")
+        print("[search] No matching offers found.")
+        print("         Tip: raise --max-price, lower --min-vram, "
+              "or drop --region.")
         return []
 
     if verbose:
-        print(f"[search] {len(offers)} Offers gefunden, Top 5:")
+        print(f"[search] {len(offers)} offers found, top 5:")
         for o in offers[:5]:
             inet_c = o.get('inet_down_cost') or 0
             print(f"   id={o['id']:>10}  {o['gpu_name']:<15} "
@@ -277,11 +277,11 @@ def find_best_offers(vast: VastAI, *,
                   f"@${inet_c:.4f}/GB  "
                   f"geo={o.get('geolocation', '?')}")
 
-    # Aus Top-5 nach Reliability sortiert: erstes Element ist Erstwahl,
-    # weitere sind Backup falls Smoketest fehlschlaegt.
+    # Top-5 sorted by reliability: first element is the primary pick,
+    # the rest are backups in case the smoketest fails.
     top = sorted(offers[:5], key=lambda o: (-o['reliability2'], o['dph_total']))
     if verbose:
-        print("[search] Reihenfolge nach Reliability:")
+        print("[search] Order by reliability:")
         for i, o in enumerate(top, 1):
             print(f"   {i}. id={o['id']} {o['gpu_name']}  "
                   f"${o['dph_total']:.3f}/h  rel={o['reliability2']:.3f}  "
@@ -290,13 +290,13 @@ def find_best_offers(vast: VastAI, *,
 
 
 def find_best_offer(vast: VastAI, **kwargs) -> dict | None:
-    """Backward-compat: erstes Element der find_best_offers Liste."""
+    """Backward-compat: first element of the find_best_offers list."""
     offers = find_best_offers(vast, **kwargs)
     return offers[0] if offers else None
 
 
 # -----------------------------------------------------------------------------
-# Instanz starten
+# Launch instance
 # -----------------------------------------------------------------------------
 
 def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
@@ -306,45 +306,45 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
                     template_hash: str | None = None,
                     extra_env: dict | None = None,
                     image_override: str | None = None) -> int:
-    """Erstellt die Instanz mit dem gewuenschten Backend-Image.
+    """Create the instance with the desired backend image.
 
-    api_key: Bearer-Token das llama-server akzeptiert. Leer = kein Auth
-    (Endpoint public). Auto-generiert von cmd_launch wenn nicht gesetzt.
-    template_hash: optional, Hash eines vast.ai Templates. Wenn gesetzt
-    werden image + onstart + runtype aus dem Template genommen, und das
-    Skript injected nur Mode-Env (LLAMA_PARALLEL/LLAMA_CTX/LLAMA_MODEL/
-    LLAMA_API_KEY). Aktuell nur fuer llamacpp-Backend mit env-aware
-    onstart unterstuetzt.
-    extra_env: bei backend='codeserver' das vorgefertigte env-dict aus
+    api_key: Bearer token that llama-server accepts. Empty = no auth
+    (endpoint public). Auto-generated by cmd_launch when unset.
+    template_hash: optional, hash of a vast.ai template. If set,
+    image + onstart + runtype come from the template, and the script
+    only injects mode-specific env (LLAMA_PARALLEL/LLAMA_CTX/LLAMA_MODEL/
+    LLAMA_API_KEY). Currently only supported for the llamacpp backend
+    with env-aware onstart.
+    extra_env: when backend='codeserver', the pre-built env dict from
     build_codeserver_env() (DOMAIN, DUCKDNS_TOKEN, CODESERVER_PASSWORD,
-    Port-Mappings). Wird vom Aufrufer gebaut, hier nur durchgereicht.
-    image_override: ueberschreibt cfg['image'] (fuer --code-image custom
-    builds). Nur bei backend='codeserver' relevant.
+    port mappings). Built by the caller, just passed through here.
+    image_override: overrides cfg['image'] (for --code-image custom
+    builds). Only relevant when backend='codeserver'.
     """
     cfg = BACKENDS[backend]
     use_template = template_hash is not None
 
     if use_template and backend != "llamacpp":
         raise ValueError(
-            f"--template-hash aktuell nur mit backend=llamacpp unterstuetzt, "
-            f"nicht {backend}")
+            f"--template-hash is currently only supported with backend=llamacpp, "
+            f"not {backend}")
 
     if backend == "codeserver" and extra_env is None:
-        raise ValueError("backend=codeserver erfordert extra_env Parameter")
+        raise ValueError("backend=codeserver requires the extra_env parameter")
 
     image = image_override or cfg["image"]
 
     print(f"[create] Backend: {backend}")
-    print(f"[create] Modell: {model}")
+    print(f"[create] Model: {model}")
     if backend == "llamacpp":
         print(f"[create] ctx={ctx} parallel={parallel} "
-              f"({ctx//parallel} tokens pro Slot)")
+              f"({ctx//parallel} tokens per slot)")
     if use_template:
         print(f"[create] Template: {template_hash} "
-              f"(image+onstart aus Template)")
+              f"(image+onstart from template)")
     else:
         print(f"[create] Image: {image}")
-    print(f"[create] Erstelle Instanz auf Offer {offer['id']}...")
+    print(f"[create] Creating instance on offer {offer['id']}...")
 
     if backend == "codeserver":
         env = dict(extra_env)  # copy so we don't mutate caller's dict
@@ -355,7 +355,7 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
     if backend == "llamacpp":
         env["HF_HOME"] = "/workspace/hf_cache"
         if use_template:
-            # Template's onstart liest diese ENVs mit Defaults
+            # Template's onstart reads these envs with defaults
             env["LLAMA_PARALLEL"] = str(parallel)
             env["LLAMA_CTX"] = str(ctx)
             env["LLAMA_MODEL"] = model
@@ -366,12 +366,12 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
         env["OLLAMA_HOST"] = "0.0.0.0:11434"
         env["OLLAMA_KEEP_ALIVE"] = "30m"
         env["OLLAMA_FLASH_ATTENTION"] = "1"
-    # backend == "codeserver": env ist schon komplett aus build_codeserver_env
+    # backend == "codeserver": env is already complete from build_codeserver_env
 
     if use_template:
-        # Template liefert image + onstart_cmd + runtype.
-        # Env wird hier komplett gesetzt (vast merged NICHT mit Template-env,
-        # es ersetzt). Deshalb -p, HF_HOME etc. mit reingenommen.
+        # Template provides image + onstart_cmd + runtype.
+        # Env is set completely here (vast does NOT merge with template env,
+        # it replaces). That's why -p, HF_HOME etc. are included.
         result = vast.create_instance(
             id=offer["id"],
             disk=disk_gb,
@@ -380,20 +380,20 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
             label=label,
         )
     else:
-        # Self-contained Pfad: image + onstart_cmd selbst rendern
+        # Self-contained path: render image + onstart_cmd ourselves
         if backend == "llamacpp":
             onstart = cfg["onstart_template"].format(
                 MODEL=model, CTX=ctx, PARALLEL=parallel, API_KEY=api_key or "")
         elif backend == "codeserver":
-            # /opt/onstart.sh ist im Image als CMD gesetzt; vast erwartet
-            # aber explizites onstart_cmd. Template hat keine Platzhalter
-            # - alle Werte kommen ueber env.
+            # /opt/onstart.sh is set as CMD in the image; vast still expects
+            # an explicit onstart_cmd. Template has no placeholders - all
+            # values come via env.
             onstart = cfg["onstart_template"]
         else:
             onstart = cfg["onstart_template"].format(MODEL=model, CTX=ctx)
-        # SDK akzeptiert ssh/direct NICHT als kwargs - der CLI uebersetzt
-        # --ssh --direct intern zu runtype="ssh_direc ssh_proxy". Wer hier
-        # ssh=True schreibt kassiert TypeError.
+        # The SDK does NOT accept ssh/direct as kwargs - the CLI translates
+        # --ssh --direct internally to runtype="ssh_direc ssh_proxy".
+        # Writing ssh=True here would raise a TypeError.
         result = vast.create_instance(
             id=offer["id"],
             image=image,
@@ -405,17 +405,16 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
         )
     if isinstance(result, str):
         result = json.loads(result)
-    # Vast-Quirk: manchmal kommt {success: False, new_contract: N,
-    # instance_api_key: ...} zurueck, obwohl die Instance tatsaechlich
-    # erstellt wurde. Wenn new_contract da ist nehmen wir das als
-    # Erfolg (sonst kriegen wir Orphan-Instances die kostenpflichtig
-    # weiterlaufen).
+    # Vast quirk: sometimes returns {success: False, new_contract: N,
+    # instance_api_key: ...} even though the instance was actually
+    # created. If new_contract is present we treat that as success
+    # (otherwise we get orphan instances that keep running on the bill).
     if not result.get("success"):
         if result.get("new_contract"):
-            print(f"[create] vast-Quirk: success=False mit new_contract="
-                  f"{result['new_contract']} - akzeptiere als erstellt.")
+            print(f"[create] vast quirk: success=False with new_contract="
+                  f"{result['new_contract']} - accepting as created.")
         else:
-            raise RuntimeError(f"create_instance fehlgeschlagen: {result}")
+            raise RuntimeError(f"create_instance failed: {result}")
 
     instance_id = result["new_contract"]
     print(f"[create] Instance ID: {instance_id}")
@@ -424,8 +423,8 @@ def create_instance(vast: VastAI, offer: dict, backend: str, model: str, *,
 
 def wait_until_running(vast: VastAI, instance_id: int,
                        timeout_sec: int = 600) -> dict:
-    """Pollt bis Instanz 'running' ist und Ports gemappt sind."""
-    print(f"[wait]  Warte auf 'running' Status (max {timeout_sec}s)...")
+    """Poll until the instance is 'running' and ports are mapped."""
+    print(f"[wait]  Waiting for 'running' status (max {timeout_sec}s)...")
     start = time.time()
     last_status = None
 
@@ -446,12 +445,12 @@ def wait_until_running(vast: VastAI, instance_id: int,
 
             if status in ("exited", "offline", "unknown"):
                 raise RuntimeError(
-                    f"Instanz im Fehlerzustand: {status}. "
-                    f"Logs pruefen oder neue Offer probieren."
+                    f"Instance in error state: {status}. "
+                    f"Check logs or try a new offer."
                 )
 
             if status == "running" and inst.get("ports"):
-                print(f"[wait]  Ports aktiv: {list(inst['ports'].keys())}")
+                print(f"[wait]  Ports active: {list(inst['ports'].keys())}")
                 return inst
 
             time.sleep(5)
@@ -461,11 +460,11 @@ def wait_until_running(vast: VastAI, instance_id: int,
             print(f"[wait]  WARN: {e}")
             time.sleep(5)
 
-    raise TimeoutError(f"Instanz {instance_id} nicht in {timeout_sec}s ready")
+    raise TimeoutError(f"Instance {instance_id} not ready within {timeout_sec}s")
 
 
 def get_endpoint(inst: dict, backend: str) -> tuple[str, int]:
-    """Liest IP und gemappten Port fuer das gewaehlte Backend."""
+    """Read IP and mapped port for the selected backend."""
     ip = inst.get("public_ipaddr") or inst.get("ssh_host")
     ports = inst.get("ports") or {}
     internal = f"{BACKENDS[backend]['exposed_port']}/tcp"
@@ -477,37 +476,37 @@ def get_endpoint(inst: dict, backend: str) -> tuple[str, int]:
 def wait_until_ready(url: str, *, headers: dict | None = None,
                      timeout_sec: int = 1800, label: str = "") -> None:
     """
-    Pollt eine HTTP(S)-URL bis sie 200 antwortet.
-    llama-server laedt das Modell beim ersten Start von HuggingFace -
-    je nach Modellgroesse 5-15 Minuten. Bei --with-codeserver kommt
-    noch Caddy-ACME-Cert + code-server-Startup obendrauf (~30s extra).
+    Poll an HTTP(S) URL until it answers 200.
+    On first start, llama-server downloads the model from HuggingFace -
+    5-15 minutes depending on model size. With --with-codeserver,
+    Caddy ACME cert + code-server startup add ~30s on top.
 
-    label: optionales Tag fuer die Ausgabe (z.B. 'llm' / 'code') wenn
-    mehrere Probes hintereinander laufen.
+    label: optional tag for output (e.g. 'llm' / 'code') when multiple
+    probes run back-to-back.
     """
     tag = f" [{label}]" if label else ""
-    print(f"[ready]{tag} Pruefe {url}...")
+    print(f"[ready]{tag} Probing {url}...")
     start = time.time()
     while time.time() - start < timeout_sec:
         try:
             r = requests.get(url, timeout=10, headers=headers, verify=True)
             if r.status_code == 200:
-                print(f"[ready]{tag} API antwortet "
-                      f"(nach {int(time.time()-start)}s)")
+                print(f"[ready]{tag} API responding "
+                      f"(after {int(time.time()-start)}s)")
                 return
         except (requests.ConnectionError, requests.Timeout, requests.exceptions.SSLError):
-            # SSL-Fehler ist erwartbar solange Caddy noch keinen Cert hat
+            # SSL error is expected while Caddy has no cert yet
             pass
         elapsed = int(time.time() - start)
         if elapsed % 30 < 5:
-            print(f"[ready]{tag} [{elapsed}s] noch nicht bereit, warte weiter...")
+            print(f"[ready]{tag} [{elapsed}s] not ready yet, still waiting...")
         time.sleep(5)
-    raise TimeoutError(f"{tag.strip() or 'API'} nach {timeout_sec}s "
-                       f"nicht bereit auf {url}")
+    raise TimeoutError(f"{tag.strip() or 'API'} not ready on {url} "
+                       f"after {timeout_sec}s")
 
 
 # -----------------------------------------------------------------------------
-# Bandwidth-Smoketest (echte HF->Host Geschwindigkeit messen)
+# Bandwidth smoketest (measure real HF->host throughput)
 # -----------------------------------------------------------------------------
 
 def get_ssh_port(inst: dict) -> int | None:
@@ -517,17 +516,17 @@ def get_ssh_port(inst: dict) -> int | None:
 
 
 def ensure_smoketest_keypair() -> tuple[str, str]:
-    """Generiert ed25519-Keypair fuer Smoketest-SSH falls noch keins da.
+    """Generate an ed25519 keypair for smoketest SSH if none exists yet.
 
-    Eigener Key (~/.ssh/gpu_summon_smoketest), damit das nicht mit User-Keys
-    kollidiert. Returns (public_key_string, private_key_path).
+    Dedicated key (~/.ssh/gpu_summon_smoketest) so it doesn't collide with
+    user keys. Returns (public_key_string, private_key_path).
     """
     key_dir = Path.home() / ".ssh"
     key_dir.mkdir(parents=True, exist_ok=True)
     priv = key_dir / "gpu_summon_smoketest"
     pub = key_dir / "gpu_summon_smoketest.pub"
     if not priv.exists():
-        print(f"[probe] Generiere SSH-Key fuer Smoketest: {priv}")
+        print(f"[probe] Generating SSH key for smoketest: {priv}")
         subprocess.run(
             ["ssh-keygen", "-t", "ed25519", "-N", "",
              "-C", "gpu-summon-smoketest", "-f", str(priv)],
@@ -541,26 +540,26 @@ def smoketest_hf_bandwidth(vast: VastAI, instance_id: int,
                             ssh_key_pub: str, ssh_key_priv: str,
                             probe_seconds: int = 15,
                             wait_for_download_sec: int = 90) -> float:
-    """Misst echte HF->Host-Bandbreite waehrend des Modell-Downloads.
+    """Measure real HF->host bandwidth during the model download.
 
-    Strategie: SSH rein, polle bis '.downloadInProgress' Cache-File existiert,
-    sample File-Size-Wachstum ueber probe_seconds. Das misst genau das was
-    am Ende zaehlt - nicht theoretische sondern effektive HF-Geschwindigkeit
-    fuer diesen Host gerade jetzt.
+    Strategy: SSH in, poll until the '.downloadInProgress' cache file exists,
+    sample file-size growth over probe_seconds. This measures exactly what
+    matters in the end - not theoretical, but the effective HF throughput
+    for this host right now.
 
-    Return: gemessene Mbps (float). 0.0 = Probe fehlgeschlagen (egal ob
-    SSH, Timeout, Parse - alles als 'unbrauchbar' behandelt).
+    Returns: measured Mbps (float). 0.0 = probe failed (SSH, timeout, parse -
+    all treated as 'unusable').
     """
     try:
         r = vast.attach_ssh(instance_id=instance_id, ssh_key=ssh_key_pub)
         if isinstance(r, str):
             r = json.loads(r)
-        # already-associated ist OK, alles andere ggf nicht.
+        # already-associated is OK, anything else might not be.
         if not r.get("success") and \
            "already" not in str(r.get("msg", "")).lower():
             print(f"[probe] WARN attach_ssh: {r}")
     except Exception as e:
-        print(f"[probe] attach_ssh Fehler: {e}")
+        print(f"[probe] attach_ssh error: {e}")
         return 0.0
 
     ssh_args = [
@@ -574,7 +573,7 @@ def smoketest_hf_bandwidth(vast: VastAI, instance_id: int,
         f"root@{ip}",
     ]
 
-    print(f"[probe] Warte auf SSH zu {ip}:{ssh_port}...")
+    print(f"[probe] Waiting for SSH to {ip}:{ssh_port}...")
     deadline = time.time() + 60
     while time.time() < deadline:
         r = subprocess.run(ssh_args + ["echo OK"],
@@ -583,10 +582,10 @@ def smoketest_hf_bandwidth(vast: VastAI, instance_id: int,
             break
         time.sleep(3)
     else:
-        print("[probe] SSH nicht erreichbar nach 60s")
+        print("[probe] SSH unreachable after 60s")
         return 0.0
 
-    print(f"[probe] Warte auf Start des HF-Downloads "
+    print(f"[probe] Waiting for HF download to start "
           f"(max {wait_for_download_sec}s)...")
     find_cmd = ("ls -1 /workspace/hf_cache/hub/models--*/blobs/"
                 "*.downloadInProgress 2>/dev/null | head -1")
@@ -601,12 +600,12 @@ def smoketest_hf_bandwidth(vast: VastAI, instance_id: int,
             break
         time.sleep(3)
     if not blob:
-        print(f"[probe] Kein .downloadInProgress nach {wait_for_download_sec}s "
-              f"- Download nicht gestartet, llama-server haengt?")
+        print(f"[probe] No .downloadInProgress after {wait_for_download_sec}s "
+              f"- download didn't start, is llama-server stuck?")
         return 0.0
-    print(f"[probe] Download laeuft: {blob}")
+    print(f"[probe] Download running: {blob}")
 
-    print(f"[probe] Sample {probe_seconds}s File-Size-Wachstum...")
+    print(f"[probe] Sampling {probe_seconds}s of file-size growth...")
     measure_cmd = (
         f'S1=$(stat -c%s "{blob}" 2>/dev/null || echo 0); '
         f'sleep {probe_seconds}; '
@@ -617,7 +616,7 @@ def smoketest_hf_bandwidth(vast: VastAI, instance_id: int,
                        capture_output=True, text=True,
                        timeout=probe_seconds + 30)
     if r.returncode != 0:
-        print(f"[probe] Mess-SSH-Befehl Fehler: {r.stderr.strip()}")
+        print(f"[probe] Measurement SSH command failed: {r.stderr.strip()}")
         return 0.0
     try:
         s1_str, s2_str = r.stdout.strip().split()
@@ -625,7 +624,7 @@ def smoketest_hf_bandwidth(vast: VastAI, instance_id: int,
         bps = max(0, s2 - s1) / probe_seconds
         return bps * 8 / 1_000_000
     except Exception as e:
-        print(f"[probe] Parse-Fehler: {e}, output={r.stdout!r}")
+        print(f"[probe] Parse error: {e}, output={r.stdout!r}")
         return 0.0
 
 
@@ -638,16 +637,16 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
                            config_dir: Path | None = None,
                            code_domain: str | None = None,
                            code_port: int | None = None) -> Path:
-    """Schreibt opencode.json + auth.json fuer das remote Setup.
+    """Write opencode.json + auth.json for the remote setup.
 
-    api_key: das Bearer-Token das llama-server erwartet. Leer = kein Auth
-    (Default-Dummy-Key wird geschrieben, llama-server akzeptiert dann eh
-    alles).
-    code_domain: bei --with-codeserver (z.B. 'mybox.duckdns.org') wird
-    der baseURL auf https://llm.{domain}/v1 gesetzt statt auf bare-IP -
-    nutzt das Caddy-TLS und versteckt die wechselnde vast-IP.
-    code_port: tatsaechlicher Host-Port fuer Container-443. 443 = wird
-    weggelassen (saubere URL); Random-Port = wird als ":PORT" eingebaut.
+    api_key: the Bearer token llama-server expects. Empty = no auth
+    (a default dummy key is written; without --api-key llama-server
+    accepts everything anyway).
+    code_domain: with --with-codeserver (e.g. 'mybox.duckdns.org'), the
+    baseURL is set to https://llm.{domain}/v1 instead of the bare IP -
+    uses Caddy's TLS and hides the changing vast IP.
+    code_port: actual host port for container-443. 443 = omitted (clean
+    URL); random port = embedded as ":PORT".
     """
     if config_dir is None:
         config_dir = Path.home() / ".config" / "opencode"
@@ -665,8 +664,8 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
         display_host = host
     provider_id = f"vast-{backend}"
 
-    # Echten Modell-Namen vom Server holen damit der Key in opencode stimmt.
-    # Wenn auth aktiv ist mit dem api-key versuchen.
+    # Fetch the real model name from the server so the key in opencode is right.
+    # If auth is active, try with the api-key.
     model_id = model
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
@@ -675,9 +674,9 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
             models_data = r.json().get("data", [])
             if models_data:
                 model_id = models_data[0]["id"]
-                print(f"[cfg]   Modell-ID vom Server: {model_id}")
+                print(f"[cfg]   Model ID from server: {model_id}")
     except Exception as e:
-        print(f"[cfg]   WARN: konnte Modell-ID nicht abrufen, nutze {model}: {e}")
+        print(f"[cfg]   WARN: could not fetch model ID, using {model}: {e}")
 
     config = {
         "$schema": "https://opencode.ai/config.json",
@@ -702,7 +701,7 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
             existing["model"] = config["model"]
             config = existing
         except json.JSONDecodeError:
-            print("[cfg]   WARN: existierende Config nicht parsbar, ueberschreibe")
+            print("[cfg]   WARN: existing config not parsable, overwriting")
 
     config_path.write_text(json.dumps(config, indent=2))
     print(f"[cfg]   {config_path}")
@@ -714,9 +713,9 @@ def write_opencode_config(host: str, port: int, model: str, backend: str,
             auth = json.loads(auth_path.read_text())
         except json.JSONDecodeError:
             pass
-    # Wenn api_key gesetzt: opencode schickt das als Bearer; llama-server
-    # validiert. Leer = der frueher genutzte Dummy-Wert reicht weil
-    # llama-server ohne --api-key alles akzeptiert.
+    # If api_key is set: opencode sends it as Bearer; llama-server
+    # validates. Empty = the previously used dummy value is fine because
+    # llama-server without --api-key accepts everything.
     auth[provider_id] = {"type": "api", "key": api_key or backend}
     auth_path.write_text(json.dumps(auth, indent=2))
     print(f"[cfg]   {auth_path}")
@@ -732,11 +731,11 @@ DUCKDNS_UPDATE_URL = "https://www.duckdns.org/update"
 
 
 def update_duckdns(subdomain: str, token: str, ip: str | None = None) -> bool:
-    """Setzt den A-Record subdomain.duckdns.org. ip=None bewirkt einen Reset
-    auf die aktuelle Verbindung-IP des Aufrufers (von duckdns aus gesehen);
-    fuer Cleanup-Zwecke uebergeben wir explizit '0.0.0.0'.
+    """Set the A-record subdomain.duckdns.org. ip=None resets to the caller's
+    current connection IP (as seen by duckdns); for cleanup purposes we
+    explicitly pass '0.0.0.0'.
 
-    Returns True wenn duckdns mit 'OK' geantwortet hat.
+    Returns True if duckdns responded with 'OK'.
     """
     params = {"domains": subdomain, "token": token}
     if ip is not None:
@@ -744,35 +743,35 @@ def update_duckdns(subdomain: str, token: str, ip: str | None = None) -> bool:
     try:
         r = requests.get(DUCKDNS_UPDATE_URL, params=params, timeout=15)
         ok = r.text.strip() == "OK"
-        # Token wird nicht geloggt (auch nicht teilweise, da kurz).
+        # Token is not logged (not even partially, since it's short).
         if ok:
             print(f"[duckdns] {subdomain}.duckdns.org -> {ip or '<auto>'}")
         else:
-            print(f"[duckdns] FEHLER: '{r.text.strip()}' (Token korrekt? "
-                  f"Subdomain '{subdomain}' im duckdns-Account angelegt?)")
+            print(f"[duckdns] ERROR: '{r.text.strip()}' (token correct? "
+                  f"subdomain '{subdomain}' created in duckdns account?)")
         return ok
     except Exception as e:
-        print(f"[duckdns] Request fehlgeschlagen: {e}")
+        print(f"[duckdns] Request failed: {e}")
         return False
 
 
 def build_codeserver_env(*, domain: str, duckdns_token: str, llm_api_key: str,
                          codeserver_password: str,
                          model: str, ctx: int, parallel: int) -> dict:
-    """Sammelt die env-Eintraege fuer create_instance() im code-server-Mode.
+    """Collect env entries for create_instance() in code-server mode.
 
-    Vast.ai-Konvention: docker -p Mappings werden als env-keys uebergeben
-    ("-p HOST:CONTAINER" -> "1"); echte Container-Env als KEY -> VALUE.
+    Vast.ai convention: docker -p mappings are passed as env keys
+    ("-p HOST:CONTAINER" -> "1"); real container env as KEY -> VALUE.
 
-    code-server's eigene PASSWORD-env aktiviert die Login-Seite mit Cookie-
-    Auth. Wir brauchen daher kein BasicAuth in Caddy davor.
+    code-server's own PASSWORD env activates its login page with cookie
+    auth. So we don't need BasicAuth in Caddy in front of it.
     """
     return {
-        # Port-Mappings
-        "-p 443:443": "1",     # Caddy HTTPS (das User-Facing-Endpoint)
-        "-p 8080:8080": "1",   # llama-server direkt (opencode-Backward-Compat)
-        "-p 80:80": "1",       # ACME HTTP-Fallback (von Caddy ungenutzt, harmlos)
-        # Container-Env (gelesen von /opt/onstart.sh)
+        # Port mappings
+        "-p 443:443": "1",     # Caddy HTTPS (the user-facing endpoint)
+        "-p 8080:8080": "1",   # llama-server direct (opencode backward-compat)
+        "-p 80:80": "1",       # ACME HTTP fallback (unused by Caddy, harmless)
+        # Container env (read by /opt/onstart.sh)
         "DOMAIN": domain,
         "DUCKDNS_TOKEN": duckdns_token,
         "LLAMA_API_KEY": llm_api_key,
@@ -789,16 +788,16 @@ def build_codeserver_env(*, domain: str, duckdns_token: str, llm_api_key: str,
 # -----------------------------------------------------------------------------
 
 def cmd_debug(args, vast: VastAI) -> None:
-    """Probiert progressiv strengere Queries und zeigt wo die Treffer auf 0 fallen.
+    """Try progressively stricter queries and show where hits fall to 0.
 
-    Hilft Filter zu finden die kaputt sind oder zu strikt - du siehst genau
-    welcher Filter den Trefferzahl-Cliff verursacht.
+    Helps find filters that are broken or too strict - you see exactly which
+    filter causes the hit-count cliff.
     """
     gpu_ram_q = round(args.min_vram * 0.93, 2)
     gpu_ram_real = int(args.min_vram * 1000 * 0.95)
 
-    # Inkrementelle Stages: jede addiert genau einen Filter zur vorherigen.
-    # So sieht man sofort welcher Filter die Treffer killt.
+    # Incremental stages: each adds exactly one filter to the previous.
+    # That way you immediately see which filter kills the hits.
     incr = [
         ("num_gpus=1",                        "baseline (num_gpus=1)"),
         ("rentable=true rented=false",        "+ rentable/rented"),
@@ -827,8 +826,8 @@ def cmd_debug(args, vast: VastAI) -> None:
     print(f"DEBUG: min_vram={args.min_vram}GB max_price=${args.max_price}/h "
           f"min_rel={args.min_reliability} cuda_min={args.cuda_min} "
           f"max_inet_cost=${args.max_inet_cost}/GB")
-    print(f"  query gpu_ram threshold: {gpu_ram_q} GB  (fuer Query-Field, in GB!)")
-    print(f"  post  gpu_ram threshold: {gpu_ram_real} MB (fuer Response-Field, in MB)")
+    print(f"  query gpu_ram threshold: {gpu_ram_q} GB  (for query field, in GB!)")
+    print(f"  post  gpu_ram threshold: {gpu_ram_real} MB (for response field, in MB)")
     print("=" * 72)
 
     last_count = None
@@ -838,30 +837,30 @@ def cmd_debug(args, vast: VastAI) -> None:
                                          order="dlperf_per_dphtotal-",
                                          limit="100")
         except Exception as e:
-            print(f"  [{label:<40}] FEHLER: {e}")
+            print(f"  [{label:<40}] ERROR: {e}")
             continue
         if isinstance(result, str):
             try:
                 result = json.loads(result)
             except json.JSONDecodeError:
-                print(f"  [{label:<40}] unparsbare Antwort: {result[:80]}")
+                print(f"  [{label:<40}] unparsable response: {result[:80]}")
                 continue
         offers = result.get("offers", []) if isinstance(result, dict) else result
         n = len(offers)
         marker = ""
         if last_count is not None and n == 0 and last_count > 0:
-            marker = "  <-- HIER bricht's ein!"
+            marker = "  <-- HITS DROP TO 0 HERE!"
         elif last_count is not None and n < last_count // 2 and last_count > 5:
-            marker = f"  (Halbierung: {last_count} -> {n})"
-        print(f"  [{label:<40}] {n:>4} Treffer{marker}")
+            marker = f"  (halving: {last_count} -> {n})"
+        print(f"  [{label:<40}] {n:>4} hits{marker}")
         last_count = n
 
     print()
-    print("Zusaetzlich Python-side Filter (im echten Lauf):")
-    print(f"  - cuda_max_good >= {args.cuda_min} und nicht in {CUDA_BLACKLIST}")
-    print(f"  - gpu_ram >= {gpu_ram_real} MB (Response-Feld)")
+    print("Additional Python-side filters (in the real run):")
+    print(f"  - cuda_max_good >= {args.cuda_min} and not in {CUDA_BLACKLIST}")
+    print(f"  - gpu_ram >= {gpu_ram_real} MB (response field)")
     print()
-    print("Kompletter Lauf mit verbose Ausgabe:")
+    print("Full run with verbose output:")
     print()
     offers = find_best_offers(vast, min_vram_gb=args.min_vram,
                               max_dph=args.max_price,
@@ -871,17 +870,16 @@ def cmd_debug(args, vast: VastAI) -> None:
                               region=args.region, cuda_min=args.cuda_min,
                               verbose=True)
     if not offers:
-        print("KEINE Offer gefunden im echten Lauf - oben sehen wo's haengt.")
+        print("NO offer found in the real run - look above to see where it fails.")
 
 
 def cmd_destroy(vast: VastAI, instance_id: int,
                 duckdns_token: str | None = None) -> None:
-    """Zerstoert die Instanz und (optional) raeumt den duckdns-Eintrag auf.
+    """Destroy the instance and (optionally) clean up the duckdns entry.
 
-    Wir lesen die Instanz-env vor dem Destroy, um DOMAIN rauszuziehen falls
-    sie im Full-Stack-Mode gesetzt war. Wenn DOMAIN gefunden + duckdns_token
-    vorhanden, wird der A-Record auf 0.0.0.0 gesetzt damit kein toter Pointer
-    zurueckbleibt.
+    We read the instance env before destroying to extract DOMAIN if it was
+    set in full-stack mode. If DOMAIN is found + duckdns_token is present,
+    the A-record is set to 0.0.0.0 so no dead pointer is left behind.
     """
     domain = None
     try:
@@ -892,24 +890,24 @@ def cmd_destroy(vast: VastAI, instance_id: int,
         if isinstance(inst, list):
             inst = inst[0] if inst else {}
         env = inst.get("extra_env") or inst.get("env") or {}
-        # vast speichert env teilweise als list of [key, value] Paare
+        # vast stores env partially as list of [key, value] pairs
         if isinstance(env, list):
             env = {k: v for pair in env if len(pair) == 2 for k, v in [pair]}
         domain = env.get("DOMAIN") if isinstance(env, dict) else None
     except Exception as e:
-        print(f"[destroy] WARN: konnte Instance-env nicht lesen: {e}")
+        print(f"[destroy] WARN: could not read instance env: {e}")
 
-    print(f"[destroy] Loesche Instanz {instance_id}...")
+    print(f"[destroy] Deleting instance {instance_id}...")
     print(vast.destroy_instance(id=instance_id))
 
     if domain and duckdns_token:
         # 'mybox.duckdns.org' -> subdomain 'mybox'
         subdomain = domain.split(".duckdns.org")[0] if domain.endswith(".duckdns.org") else domain
-        print(f"[destroy] Raeume duckdns auf: {domain} -> 0.0.0.0")
+        print(f"[destroy] Cleaning up duckdns: {domain} -> 0.0.0.0")
         update_duckdns(subdomain, duckdns_token, ip="0.0.0.0")
     elif domain and not duckdns_token:
-        print(f"[destroy] HINWEIS: {domain} zeigt noch auf die tote IP. "
-              f"Manuell aufraeumen oder mit --duckdns-token erneut destroyen.")
+        print(f"[destroy] NOTE: {domain} still points to the dead IP. "
+              f"Clean up manually, or re-run destroy with --duckdns-token.")
 
 
 def cmd_list(vast: VastAI) -> None:
@@ -918,7 +916,7 @@ def cmd_list(vast: VastAI) -> None:
         result = json.loads(result)
     instances = result.get("instances", []) if isinstance(result, dict) else result
     if not instances:
-        print("Keine aktiven Instanzen.")
+        print("No active instances.")
         return
     for i in instances:
         print(f"  id={i.get('id')} status={i.get('actual_status')} "
@@ -927,17 +925,17 @@ def cmd_list(vast: VastAI) -> None:
 
 
 def cmd_ssh(vast: VastAI, instance_id: int) -> None:
-    """Hängt einen SSH-Key an die Instance und exec'd in eine interaktive
-    SSH-Session. Convenience zum Debuggen (Logs lesen, Modell-Download
-    checken, Caddy/llama-server inspizieren).
+    """Attach an SSH key to the instance and exec into an interactive
+    SSH session. Convenience for debugging (reading logs, checking model
+    download, inspecting Caddy/llama-server).
 
-    Reuses den gpu_summon_smoketest Key. Wenn der Key noch nicht
-    angelegt ist, wird er hier angelegt. attach_ssh ist idempotent (das
-    'already attached' Failure-Mode kommt vor und ist OK).
+    Reuses the gpu_summon_smoketest key. If the key doesn't exist yet,
+    it's created here. attach_ssh is idempotent (the 'already attached'
+    failure mode happens and is OK).
 
-    os.execvp ersetzt den Python-Prozess durch ssh, damit der User eine
-    echte interaktive Shell kriegt (TTY, signals, ...) statt einer
-    subprocess.run-Wraperei.
+    os.execvp replaces the Python process with ssh so the user gets a
+    real interactive shell (TTY, signals, ...) instead of a
+    subprocess.run wrapper.
     """
     try:
         inst_raw = vast.show_instance(id=instance_id)
@@ -947,15 +945,15 @@ def cmd_ssh(vast: VastAI, instance_id: int) -> None:
         if isinstance(inst, list):
             inst = inst[0] if inst else {}
     except Exception as e:
-        print(f"FEHLER: konnte Instance {instance_id} nicht lesen: {e}")
+        print(f"ERROR: could not read instance {instance_id}: {e}")
         sys.exit(2)
 
     ip = inst.get("public_ipaddr") or inst.get("ssh_host")
     ssh_port = get_ssh_port(inst)
     status = inst.get("actual_status") or inst.get("cur_state") or "?"
     if not ip or not ssh_port:
-        print(f"FEHLER: kein SSH-Endpoint fuer Instance {instance_id} "
-              f"(Status: {status}). Vielleicht noch nicht hochgefahren?")
+        print(f"ERROR: no SSH endpoint for instance {instance_id} "
+              f"(status: {status}). Maybe not booted yet?")
         sys.exit(2)
 
     pub, priv = ensure_smoketest_keypair()
@@ -968,13 +966,13 @@ def cmd_ssh(vast: VastAI, instance_id: int) -> None:
                 "already" not in str(r.get("msg", "")).lower()):
             print(f"[ssh]  WARN attach_ssh: {r}")
     except Exception as e:
-        print(f"[ssh]  WARN: attach_ssh fehlgeschlagen ({e}); "
-              f"trotzdem Verbindung versuchen...")
+        print(f"[ssh]  WARN: attach_ssh failed ({e}); "
+              f"trying to connect anyway...")
 
     print(f"[ssh]  ssh -i {priv} -p {ssh_port} root@{ip}")
     print()
-    # execvp ersetzt diesen Python-Prozess durch ssh -- echte interaktive
-    # Shell mit TTY, signal handling etc.
+    # execvp replaces this Python process with ssh -- real interactive
+    # shell with TTY, signal handling etc.
     os.execvp("ssh", [
         "ssh",
         "-i", priv,
@@ -987,58 +985,58 @@ def cmd_ssh(vast: VastAI, instance_id: int) -> None:
 
 
 def cmd_launch(args, vast: VastAI) -> None:
-    # code-server-Mode: zwingt backend=codeserver, validiert Pflicht-Inputs,
-    # generiert das Workspace-Passwort. Muss VOR dem Backend-Lookup passieren.
+    # code-server mode: forces backend=codeserver, validates required inputs,
+    # generates the workspace password. Must happen BEFORE the backend lookup.
     code_domain = None
     code_env = None
     code_password = None
     if args.with_codeserver:
         if not args.code_domain:
-            print("FEHLER: --with-codeserver erfordert --code-domain SUBDOMAIN")
+            print("ERROR: --with-codeserver requires --code-domain SUBDOMAIN")
             sys.exit(1)
         if not args.duckdns_token:
-            print("FEHLER: --with-codeserver erfordert DUCKDNS_TOKEN env-var "
-                  "oder --duckdns-token TOKEN")
+            print("ERROR: --with-codeserver requires DUCKDNS_TOKEN env var "
+                  "or --duckdns-token TOKEN")
             sys.exit(1)
         if "." in args.code_domain:
-            print("FEHLER: --code-domain ist nur die Subdomain "
-                  "(z.B. 'mybox', NICHT 'mybox.duckdns.org')")
+            print("ERROR: --code-domain is just the subdomain "
+                  "(e.g. 'mybox', NOT 'mybox.duckdns.org')")
             sys.exit(1)
         args.backend = "codeserver"
         code_domain = f"{args.code_domain}.duckdns.org"
         if args.disk < BACKENDS["codeserver"]["disk_gb_min"]:
-            print(f"[code]   --disk {args.disk} zu klein, "
-                  f"setze auf {BACKENDS['codeserver']['disk_gb_min']}")
+            print(f"[code]   --disk {args.disk} too small, "
+                  f"raising to {BACKENDS['codeserver']['disk_gb_min']}")
             args.disk = BACKENDS["codeserver"]["disk_gb_min"]
 
     backend_cfg = BACKENDS[args.backend]
     model = args.model or backend_cfg["default_model"]
 
-    # API-Key generieren falls nicht angegeben (oder explizit deaktiviert).
-    # Default: AUTO-GENERATE damit der Endpoint nicht offen im Netz steht.
+    # Generate API key if not provided (or explicitly disabled).
+    # Default: AUTO-GENERATE so the endpoint isn't open on the net.
     if args.llm_api_key is None:
         api_key = secrets.token_urlsafe(24)
-        print(f"[auth]   Kein --llm-api-key angegeben - generiert: {api_key}")
+        print(f"[auth]   No --llm-api-key given - generated: {api_key}")
     elif args.llm_api_key == "":
         api_key = ""
-        print("[auth]   --llm-api-key='' -> kein Auth, Endpoint ist OFFEN!")
+        print("[auth]   --llm-api-key='' -> no auth, endpoint is OPEN!")
     else:
         api_key = args.llm_api_key
-        print(f"[auth]   Nutze --llm-api-key: {api_key[:8]}...")
+        print(f"[auth]   Using --llm-api-key: {api_key[:8]}...")
 
-    # code-server Workspace-Password (nur --with-codeserver).
+    # code-server workspace password (only with --with-codeserver).
     if args.with_codeserver:
         if args.code_password is None:
             code_password = secrets.token_urlsafe(18)
-            print(f"[code]   Workspace-Pass auto-generiert: {code_password}")
+            print(f"[code]   Workspace pass auto-generated: {code_password}")
         elif args.code_password == "":
-            print("FEHLER: leeres code-server-Passwort - dann waere die IDE "
-                  "oeffentlich erreichbar. Bitte Passwort setzen oder "
-                  "Default-Auto-Gen lassen.")
+            print("ERROR: empty code-server password - that would make the IDE "
+                  "publicly reachable. Please set a password or leave the "
+                  "default auto-gen.")
             sys.exit(1)
         else:
             code_password = args.code_password
-            print(f"[code]   Nutze --code-password: {code_password[:4]}...")
+            print(f"[code]   Using --code-password: {code_password[:4]}...")
         code_env = build_codeserver_env(
             domain=code_domain,
             duckdns_token=args.duckdns_token,
@@ -1064,14 +1062,14 @@ def cmd_launch(args, vast: VastAI) -> None:
 
     if args.dry_run:
         o = offers[0]
-        print(f"\n[dry-run] Erstwahl: id={o['id']} {o['gpu_name']} "
-              f"${o['dph_total']:.3f}/h - Abbruch.")
+        print(f"\n[dry-run] Primary pick: id={o['id']} {o['gpu_name']} "
+              f"${o['dph_total']:.3f}/h - aborting.")
         if args.min_real_mbps > 0:
-            print(f"[dry-run] (Smoketest gegen {args.min_real_mbps} Mbps "
-                  f"wuerde nach Container-Start laufen.)")
+            print(f"[dry-run] (smoketest against {args.min_real_mbps} Mbps "
+                  f"would run after container start.)")
         return
 
-    # SSH-Key fuer Smoketest vorbereiten falls aktiviert
+    # Prepare SSH key for smoketest if enabled
     ssh_pub = None
     ssh_priv = None
     if args.min_real_mbps > 0:
@@ -1082,8 +1080,8 @@ def cmd_launch(args, vast: VastAI) -> None:
     chosen_offer = None
 
     for attempt, offer in enumerate(offers, 1):
-        print(f"\n[try]   Versuch {attempt}/{len(offers)}: "
-              f"Offer {offer['id']} ({offer['gpu_name']}, "
+        print(f"\n[try]   Attempt {attempt}/{len(offers)}: "
+              f"offer {offer['id']} ({offer['gpu_name']}, "
               f"${offer['dph_total']:.3f}/h, "
               f"inet_adv={offer.get('inet_down', 0):.0f}Mbps)")
 
@@ -1097,7 +1095,7 @@ def cmd_launch(args, vast: VastAI) -> None:
                 image_override=args.code_image if args.with_codeserver else None,
             )
         except Exception as e:
-            print(f"[try]   create_instance fehlgeschlagen: {e}")
+            print(f"[try]   create_instance failed: {e}")
             instance_id = None
             continue
 
@@ -1105,7 +1103,7 @@ def cmd_launch(args, vast: VastAI) -> None:
             inst = wait_until_running(vast, instance_id,
                                        timeout_sec=args.timeout)
         except Exception as e:
-            print(f"[try]   Container Start fehlgeschlagen: {e}")
+            print(f"[try]   Container start failed: {e}")
             try:
                 vast.destroy_instance(id=instance_id)
             except Exception:
@@ -1113,30 +1111,29 @@ def cmd_launch(args, vast: VastAI) -> None:
             instance_id = None
             continue
 
-        # Bei --with-codeserver: vast.ai-Hosts haben Port 443 quasi immer
-        # selbst belegt (eigener Web-Proxy). Wir akzeptieren den Random-Port
-        # den vast uns gibt und schreiben ihn in alle URLs. Frueher haben
-        # wir bis zu 3 Offers durchprobiert - lohnt nicht, kostet nur Zeit
-        # und Geld.
+        # With --with-codeserver: vast.ai hosts almost always have port 443
+        # already taken (their own web proxy). We accept the random port that
+        # vast gives us and write it into all URLs. We used to try up to 3
+        # offers - not worth it, just costs time and money.
         if args.with_codeserver:
             _, host_port = get_endpoint(inst, args.backend)
             if host_port != 443:
-                print(f"[code]   host_port={host_port} (vast-Host hat 443 "
-                      f"belegt) - URLs werden mit ':{host_port}' versehen.")
+                print(f"[code]   host_port={host_port} (vast host has 443 "
+                      f"taken) - URLs will be tagged with ':{host_port}'.")
 
         if args.min_real_mbps > 0:
             ip, _port = get_endpoint(inst, args.backend)
             ssh_port = get_ssh_port(inst)
             if not ssh_port:
-                print("[probe] WARN: kein SSH-Port gemappt - skipping smoketest")
+                print("[probe] WARN: no SSH port mapped - skipping smoketest")
             else:
                 mbps = smoketest_hf_bandwidth(
                     vast, instance_id, ip, ssh_port, ssh_pub, ssh_priv)
-                print(f"[probe] Echte HF->Host Bandbreite: {mbps:.1f} Mbps "
-                      f"(Threshold: {args.min_real_mbps:.0f} Mbps)")
+                print(f"[probe] Real HF->host bandwidth: {mbps:.1f} Mbps "
+                      f"(threshold: {args.min_real_mbps:.0f} Mbps)")
                 if mbps < args.min_real_mbps:
-                    print("[probe] Zu langsam - zerstoere und probiere "
-                          "naechsten Offer.")
+                    print("[probe] Too slow - destroying and trying "
+                          "the next offer.")
                     try:
                         vast.destroy_instance(id=instance_id)
                     except Exception:
@@ -1148,63 +1145,62 @@ def cmd_launch(args, vast: VastAI) -> None:
         break
 
     if chosen_offer is None or instance_id is None:
-        print("\nFEHLER: Kein Offer hat den Bandwidth-Smoketest bestanden.")
-        print("        Tipp: --min-real-mbps senken, --min-inet-down "
-              "erhoehen, oder zu anderer Tageszeit retry.")
+        print("\nERROR: No offer passed the bandwidth smoketest.")
+        print("        Tip: lower --min-real-mbps, raise --min-inet-down, "
+              "or retry at a different time of day.")
         sys.exit(2)
 
     try:
         ip, port = get_endpoint(inst, args.backend)
-        print(f"\n[ready] Instance laeuft auf {ip}:{port}")
+        print(f"\n[ready] Instance running on {ip}:{port}")
 
         if args.with_codeserver:
-            # Tatsaechlicher Host-Port der auf Container-443 mapped: 443
-            # wenn der vast-Host Glueck hatte, sonst Random. Wir bauen alle
-            # User-Facing-URLs mit ggf. ":PORT" Suffix.
+            # Actual host port mapped to container 443: 443 if the vast host
+            # was lucky, otherwise random. We build all user-facing URLs
+            # with a ":PORT" suffix when needed.
             port_suffix = "" if port == 443 else f":{port}"
             ide_url = f"https://code.{code_domain}{port_suffix}"
             llm_url_base = f"https://llm.{code_domain}{port_suffix}"
 
-            # duckdns-A-Record auf die neue vast-IP setzen, BEVOR Caddy
-            # eine ACME DNS-01 Challenge versucht (sonst schlaegt der erste
-            # Cert-Versuch fehl). Der TXT-Record kommt von Caddy selbst -
-            # wir setzen nur den A-Record.
-            print(f"[code]   Setze duckdns: {code_domain} -> {ip}")
+            # Set duckdns A-record to the new vast IP BEFORE Caddy attempts
+            # an ACME DNS-01 challenge (otherwise the first cert attempt
+            # fails). The TXT record comes from Caddy itself - we only set
+            # the A-record.
+            print(f"[code]   Setting duckdns: {code_domain} -> {ip}")
             ok = update_duckdns(args.code_domain, args.duckdns_token, ip=ip)
             if not ok:
-                print("[code]   WARN: duckdns-Update fehlgeschlagen - "
-                      "Caddy ACME-Cert wird vermutlich nicht gehen.")
+                print("[code]   WARN: duckdns update failed - "
+                      "Caddy ACME cert will probably not work.")
 
-            print("[ready] Warte auf llama-server (5-15 Min Modell-Download)...")
+            print("[ready] Waiting for llama-server (5-15 min model download)...")
             llm_url = f"{llm_url_base}{backend_cfg['api_path']}/models"
             llm_headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
             wait_until_ready(llm_url, headers=llm_headers,
                              timeout_sec=args.model_timeout, label="llm")
-            print("[ready] Warte auf code-server (Caddy-ACME + Login-Page)...")
+            print("[ready] Waiting for code-server (Caddy ACME + login page)...")
             wait_until_ready(f"{ide_url}/",
                              timeout_sec=300, label="code")
         else:
             url = backend_cfg["ready_check"].format(host=ip, port=port)
-            print("[ready] Warte auf Modell-Download und Start "
-                  "(kann 5-15 Min dauern)...")
+            print("[ready] Waiting for model download and startup "
+                  "(can take 5-15 min)...")
             wait_until_ready(url, timeout_sec=args.model_timeout)
     except Exception as e:
-        print(f"\nFEHLER: {e}")
-        print(f"Tipp: python {sys.argv[0]} --destroy {instance_id}")
+        print(f"\nERROR: {e}")
+        print(f"Tip: python {sys.argv[0]} --destroy {instance_id}")
         sys.exit(2)
 
     if args.write_config:
-        # Bei codeserver-Mode pass auch den host_port so dass die
-        # opencode-Config den richtigen URL-Port enthaelt (falls != 443).
+        # In codeserver mode also pass the host_port so the opencode
+        # config contains the correct URL port (if != 443).
         write_opencode_config(ip, port, model, args.backend, api_key=api_key,
                               code_domain=code_domain,
                               code_port=(port if args.with_codeserver else None))
 
-    # Bei --with-codeserver: AGENTS.md auf der Box hat ein
-    # <HOST_PORT_SUFFIX>-Placeholder den wir jetzt mit dem echten Port
-    # ersetzen. Geht via SSH (Smoketest-Key wird wiederverwendet bzw.
-    # angelegt). Best-Effort - bei SSH-Failure printen wir einen Hinweis
-    # statt zu crashen.
+    # With --with-codeserver: AGENTS.md on the box has a
+    # <HOST_PORT_SUFFIX> placeholder that we now replace with the real
+    # port. Done via SSH (smoketest key is reused or created). Best-
+    # effort - on SSH failure we print a hint instead of crashing.
     if args.with_codeserver:
         port_suffix = "" if port == 443 else f":{port}"
         ssh_port_for_inst = get_ssh_port(inst)
@@ -1214,7 +1210,7 @@ def cmd_launch(args, vast: VastAI) -> None:
                 r = vast.attach_ssh(instance_id=instance_id, ssh_key=pub)
                 if isinstance(r, str):
                     r = json.loads(r)
-                # already-attached ist auch OK, nur kompletter Failure ist schlimm
+                # already-attached is also OK, only a complete failure is bad
                 # Two SSH-side fixups: AGENTS.md placeholder + restart
                 # code-server with the real VSCODE_PROXY_URI (so the Ports
                 # tab in VS Code shows usable subdomain URLs incl. port).
@@ -1235,11 +1231,11 @@ def cmd_launch(args, vast: VastAI) -> None:
                     fixup_cmd,
                 ], check=False, timeout=30, capture_output=True)
                 print(f"[code]   AGENTS.md + code-server VSCODE_PROXY_URI "
-                      f"auf host_port={port} gesetzt.")
+                      f"set to host_port={port}.")
             except Exception as e:
-                print(f"[code]   WARN: konnte AGENTS.md nicht patchen: {e}")
+                print(f"[code]   WARN: could not patch AGENTS.md: {e}")
                 if port != 443:
-                    print("[code]   Manuell im Browser-Terminal:")
+                    print("[code]   Manually in the browser terminal:")
                     print(f"      sudo sed -i 's|<HOST_PORT_SUFFIX>|:{port}|g' "
                           "/workspace/projects/AGENTS.md")
 
@@ -1248,17 +1244,17 @@ def cmd_launch(args, vast: VastAI) -> None:
         port_suffix = "" if port == 443 else f":{port}"
         ide_url = f"https://code.{code_domain}{port_suffix}"
         llm_url_base = f"https://llm.{code_domain}{port_suffix}"
-        print("FERTIG. AI-Dev-Umgebung laeuft.")
+        print("DONE. AI dev environment is running.")
         print()
-        print(f"  Browser-IDE:   {ide_url}")
-        print(f"  LLM-Endpoint:  {llm_url_base}{backend_cfg['api_path']}")
+        print(f"  Browser IDE:   {ide_url}")
+        print(f"  LLM endpoint:  {llm_url_base}{backend_cfg['api_path']}")
         if api_key:
-            print(f"  LLM-Bearer:    {api_key}")
-        print(f"  IDE-Login:     {code_password}   (code-server password)")
+            print(f"  LLM bearer:    {api_key}")
+        print(f"  IDE login:     {code_password}   (code-server password)")
         if port != 443:
             print()
-            print(f"  HINWEIS: vast-Host hat 443 belegt, nutzen Port {port}. "
-                  f"Bookmark mit ':{port}' speichern.")
+            print(f"  NOTE: vast host has 443 taken, using port {port}. "
+                  f"Save your bookmark with ':{port}'.")
         print()
         print("Test:")
         if api_key:
@@ -1266,13 +1262,13 @@ def cmd_launch(args, vast: VastAI) -> None:
             print(f"       {llm_url_base}{backend_cfg['api_path']}/models")
         print(f"  Browser: {ide_url}")
         print()
-        print("opencode starten (Config zeigt auf den TLS-Endpoint):")
+        print("Start opencode (config points at the TLS endpoint):")
         print("  opencode")
     else:
-        print("FERTIG. Endpoint:")
+        print("DONE. Endpoint:")
         print(f"  http://{ip}:{port}{backend_cfg['api_path']}")
         if api_key:
-            print(f"  API-Key: {api_key}")
+            print(f"  API key: {api_key}")
         print()
         print("Test:")
         if api_key:
@@ -1281,13 +1277,13 @@ def cmd_launch(args, vast: VastAI) -> None:
         else:
             print(f"  curl http://{ip}:{port}{backend_cfg['api_path']}/models")
         print()
-        print("opencode starten (Config + Auth sind geschrieben):")
+        print("Start opencode (config + auth have been written):")
         print("  opencode")
     print()
-    print("WICHTIG - Aufraeumen wenn fertig (sonst laeuft die Stundenuhr!):")
+    print("IMPORTANT - clean up when done (otherwise the meter keeps running!):")
     if args.with_codeserver:
         print(f"  python {sys.argv[0]} --destroy {instance_id} \\")
-        print("      --duckdns-token $DUCKDNS_TOKEN  # raeumt auch DNS auf")
+        print("      --duckdns-token $DUCKDNS_TOKEN  # also cleans up DNS")
     else:
         print(f"  python {sys.argv[0]} --destroy {instance_id}")
     print("="*60)
@@ -1304,122 +1300,123 @@ def main():
     action.add_argument("--list", action="store_true")
     action.add_argument("--destroy", type=int, metavar="ID")
     action.add_argument("--ssh", type=int, metavar="ID",
-                        help="SSH-Login auf eine laufende Instance. Erzeugt "
-                             "(falls noetig) den gpu-summon-smoketest-Key, "
-                             "haengt ihn an die Instance an und exec'd in "
-                             "eine interaktive Shell. Praktisch zum Logs-"
-                             "Lesen / Debuggen einer laufenden Box.")
+                        help="SSH login to a running instance. Creates "
+                             "(if needed) the gpu-summon-smoketest key, "
+                             "attaches it to the instance, and exec's into "
+                             "an interactive shell. Handy for reading logs "
+                             "or debugging a running box.")
     action.add_argument("--debug", action="store_true",
-                        help="Probiert progressiv strengere Queries und zeigt "
-                             "wo die Trefferzahl auf 0 faellt.")
+                        help="Try progressively stricter queries and show "
+                             "where the hit count falls to 0.")
 
     p.add_argument("--backend", choices=list(BACKENDS.keys()), default="llamacpp",
-                   help="Inference Engine (default: llamacpp - empfohlen fuer Qwen3.6+)")
+                   help="Inference engine (default: llamacpp - recommended for Qwen3.6+)")
     p.add_argument("--model", default=None,
-                   help="Modell-Spezifikation. Default je nach Backend.")
+                   help="Model spec. Default depends on the backend.")
     p.add_argument("--min-vram", type=int, default=32)
     p.add_argument("--max-price", type=float, default=0.50)
     p.add_argument("--min-reliability", type=float, default=0.95,
-                   help="Min reliability (default: 0.95). 0.98+ ist sehr strikt.")
+                   help="Min reliability (default: 0.95). 0.98+ is very strict.")
     p.add_argument("--max-inet-cost", type=float, default=0.01,
-                   help="Max Download-Bandbreitenkosten in $/GB (default: 0.01). "
-                        "Bei ~25GB Modell-Pull macht das im worst case "
-                        "$0.25/Launch. Werte ueber 0.05 sind ueblich aber "
-                        "teuer - dort kostet ein Pull ueber $1.")
+                   help="Max download bandwidth cost in $/GB (default: 0.01). "
+                        "On a ~25GB model pull that's worst-case $0.25/launch. "
+                        "Values above 0.05 are common but expensive - a single "
+                        "pull there costs over $1.")
     p.add_argument("--min-inet-down", type=int, default=200,
-                   help="Min beworbene Download-Bandbreite in Mbps (default 200). "
-                        "Floor fuer den Filter - Hosts werben aber gerne mehr "
-                        "als sie liefern, also wenig aussagekraeftig. Fuer "
-                        "echten Test --min-real-mbps benutzen.")
+                   help="Min advertised download bandwidth in Mbps (default 200). "
+                        "A floor for the filter - hosts often advertise more "
+                        "than they deliver, so not very meaningful. For a real "
+                        "test use --min-real-mbps.")
     p.add_argument("--min-real-mbps", type=float, default=0,
-                   help="Echter Bandbreiten-Smoketest beim Launch in Mbps. "
-                        "0 = deaktiviert (default). Wenn gesetzt: nach Container-"
-                        "Start wird die echte HF->Host-Geschwindigkeit gemessen "
-                        "(File-Size-Wachstum im Cache, 15s sample), und bei "
-                        "Unterschreiten wird die Instanz zerstoert und der "
-                        "naechste Top-5-Offer probiert. Faengt Hosts ab die "
-                        "200Mbps inet_down advertisen aber real nur 80 liefern. "
-                        "Sinnvolle Werte: 100 (locker), 200 (mittel), 400 "
-                        "(strikt - HF muss mitspielen).")
+                   help="Real bandwidth smoketest at launch, in Mbps. "
+                        "0 = disabled (default). When set: after container "
+                        "start, real HF->host throughput is measured "
+                        "(file-size growth in cache, 15s sample), and on "
+                        "undershoot the instance is destroyed and the next "
+                        "top-5 offer is tried. Catches hosts that advertise "
+                        "200 Mbps inet_down but only deliver 80. Sensible "
+                        "values: 100 (loose), 200 (medium), 400 (strict - "
+                        "HF has to cooperate).")
     p.add_argument("--cuda-min", type=float, default=CUDA_MIN_GOOD,
-                   help=f"Min CUDA Version (default: {CUDA_MIN_GOOD}). "
-                        f"13.2 wird immer ausgeschlossen (Gibberish-Bug).")
+                   help=f"Min CUDA version (default: {CUDA_MIN_GOOD}). "
+                        f"13.2 is always excluded (gibberish bug).")
     p.add_argument("--region", default=None)
     p.add_argument("--disk", type=int, default=80)
     p.add_argument("--num-ctx", type=int, default=65536,
-                   help="GESAMT-Context-Window (default: 65536). Wird auf "
-                        "--parallel Slots aufgeteilt - bei parallel=4 also "
-                        "16k pro User. Mit q8 KV-Cache passen bei Qwen3.6 "
-                        "sogar 128k+ Gesamt auf 32GB.")
+                   help="TOTAL context window (default: 65536). Split across "
+                        "--parallel slots - with parallel=4 that's 16k per "
+                        "user. With q8 KV cache, Qwen3.6 fits 128k+ total "
+                        "on 32GB.")
     p.add_argument("--parallel", type=int, default=4,
-                   help="Anzahl paralleler Inferenz-Slots (default: 4). "
-                        "Hoeher = mehr User gleichzeitig, aber weniger ctx "
-                        "pro User und weniger tok/s pro User. Faustformel "
-                        "fuer 32GB GPU: 4 fuer Solo/Paar, 8 fuer kleine "
-                        "Workshop-Gruppe.")
+                   help="Number of parallel inference slots (default: 4). "
+                        "Higher = more concurrent users, but less ctx per "
+                        "user and lower tok/s per user. Rule of thumb for "
+                        "a 32GB GPU: 4 for solo/pair, 8 for a small "
+                        "workshop group.")
     p.add_argument("--workshop-mode", action="store_true",
                    help="Shortcut: --parallel 8 --num-ctx 131072 "
-                        "(= 16k pro User auf 8 Slots). Optimiert fuer "
-                        "~5-10 gleichzeitige User. Setzt TTFT bei 8 "
-                        "concurrent von ~5s auf ~1s, kostet ~40%% "
-                        "pro-User-Speed. Auf 32GB GPU verbleiben ~6GB "
-                        "VRAM Reserve.")
+                        "(= 16k per user across 8 slots). Optimized for "
+                        "~5-10 concurrent users. Drops TTFT at 8 "
+                        "concurrent from ~5s to ~1s, costs ~40%% in "
+                        "per-user speed. On a 32GB GPU, ~6GB VRAM remain "
+                        "as headroom.")
     p.add_argument("--solo-mode", action="store_true",
                    help="Shortcut: --parallel 2 --num-ctx 131072 "
-                        "(= 64k pro User auf 2 Slots). Fuer Solo-Arbeit "
-                        "mit langen Konversationen oder grossen "
-                        "Code-Files. Voller Single-User-Speed (~53 tok/s), "
-                        "zweiter Slot als Reserve fuer Tool-Calls / "
-                        "Background-Anfragen ohne Queuing.")
+                        "(= 64k per user across 2 slots). For solo work "
+                        "with long conversations or large code files. "
+                        "Full single-user speed (~53 tok/s), second slot "
+                        "as headroom for tool calls / background requests "
+                        "without queuing.")
     p.add_argument("--llm-api-key",
                    dest="llm_api_key",
                    default=os.environ.get("GPU_SUMMON_LLM_API_KEY"),
-                   help="Bearer-Token fuer llama-server. Default: 32-char "
-                        "Random-Token wird generiert. Leerstring '' = kein "
-                        "Auth (Endpoint OFFEN im Netz). Setzbar via env-var "
-                        "GPU_SUMMON_LLM_API_KEY (z.B. fuer wiederverwendbare "
-                        "Keys ueber mehrere Launches hinweg). Nicht zu "
-                        "verwechseln mit --api-key (das ist der VAST_API_KEY).")
+                   help="Bearer token for llama-server. Default: a 32-char "
+                        "random token is generated. Empty string '' = no "
+                        "auth (endpoint OPEN on the net). Settable via env "
+                        "var GPU_SUMMON_LLM_API_KEY (e.g. for reusable keys "
+                        "across multiple launches). Not to be confused with "
+                        "--api-key (which is the VAST_API_KEY).")
     p.add_argument("--template-hash",
                    default=os.environ.get("GPU_SUMMON_TEMPLATE_HASH"),
-                   help="Vast.ai Template-Hash. Statt onstart_cmd selbst zu "
-                        "rendern wird das Template benutzt - image + onstart + "
-                        "runtype kommen aus dem Template, nur Mode-Env "
-                        "(LLAMA_PARALLEL/CTX/MODEL) wird vom Skript injected. "
-                        "Setzbar via env-var GPU_SUMMON_TEMPLATE_HASH.")
+                   help="Vast.ai template hash. Instead of rendering "
+                        "onstart_cmd ourselves the template is used - image "
+                        "+ onstart + runtype come from the template, the "
+                        "script only injects mode env (LLAMA_PARALLEL/CTX/"
+                        "MODEL). Settable via env var GPU_SUMMON_TEMPLATE_HASH.")
 
-    # ----- code-server-Mode (--with-codeserver) -----
+    # ----- code-server mode (--with-codeserver) -----
     p.add_argument("--with-codeserver", action="store_true",
-                   help="Browserbasierte AI-Dev-Umgebung: llama-server PLUS "
-                        "code-server (browser-VS-Code) auf derselben vast.ai-"
-                        "Maschine, hinter Caddy mit Wildcard-TLS via duckdns + "
-                        "Let's Encrypt. Braucht --code-domain und DUCKDNS_TOKEN. "
-                        "Nutzt das Image aus --code-image (default: gpu-summon-"
-                        "codeserver), das vorab via codeserver/build-and-push.sh "
-                        "(oder den GitHub Actions Workflow) gebaut sein muss.")
+                   help="Browser-based AI dev environment: llama-server PLUS "
+                        "code-server (browser VS Code) on the same vast.ai "
+                        "machine, behind Caddy with wildcard TLS via duckdns "
+                        "+ Let's Encrypt. Requires --code-domain and "
+                        "DUCKDNS_TOKEN. Uses the image from --code-image "
+                        "(default: gpu-summon-codeserver), which must be "
+                        "built beforehand via codeserver/build-and-push.sh "
+                        "(or the GitHub Actions workflow).")
     p.add_argument("--code-domain", default=None,
-                   help="Subdomain unter duckdns.org, z.B. 'mybox' fuer "
-                        "mybox.duckdns.org. Pflicht bei --with-codeserver. "
-                        "Wildcard-Cert deckt zusaetzlich llm.mybox.duckdns.org "
-                        "ab (direkter LLM-Zugriff fuer opencode).")
+                   help="Subdomain under duckdns.org, e.g. 'mybox' for "
+                        "mybox.duckdns.org. Required with --with-codeserver. "
+                        "The wildcard cert also covers llm.mybox.duckdns.org "
+                        "(direct LLM access for opencode).")
     p.add_argument("--duckdns-token",
                    default=os.environ.get("DUCKDNS_TOKEN"),
-                   help="duckdns.org API-Token (von https://www.duckdns.org/). "
-                        "Setzbar via env-var DUCKDNS_TOKEN. Wird gebraucht "
-                        "fuer DNS-Update beim Launch und ACME DNS-01 Challenge "
-                        "(Wildcard-Cert).")
+                   help="duckdns.org API token (from https://www.duckdns.org/). "
+                        "Settable via env var DUCKDNS_TOKEN. Needed for the "
+                        "DNS update at launch and the ACME DNS-01 challenge "
+                        "(wildcard cert).")
     p.add_argument("--code-image",
                    default="ghcr.io/dg1001/gpu-summon-codeserver:latest",
-                   help="Docker-Image fuer code-server-Mode. Default: "
-                        "ghcr.io/dg1001/gpu-summon-codeserver:latest. Selber "
-                        "bauen via codeserver/build-and-push.sh oder den "
-                        "GitHub Actions Workflow.")
+                   help="Docker image for code-server mode. Default: "
+                        "ghcr.io/dg1001/gpu-summon-codeserver:latest. Build "
+                        "your own via codeserver/build-and-push.sh or the "
+                        "GitHub Actions workflow.")
     p.add_argument("--code-password",
                    default=os.environ.get("CODESERVER_PASSWORD"),
-                   help="Workspace-Passwort fuer code-server's Login-Page. "
-                        "Default: 24-char Auto-Generated. Setzbar via env-var "
-                        "CODESERVER_PASSWORD. Leerstring '' wird abgelehnt - "
-                        "ohne Passwort waere die IDE oeffentlich.")
+                   help="Workspace password for code-server's login page. "
+                        "Default: 24-char auto-generated. Settable via env "
+                        "var CODESERVER_PASSWORD. Empty string '' is "
+                        "rejected - without a password the IDE would be public.")
 
     p.add_argument("--label", default="opencode-llm")
     p.add_argument("--timeout", type=int, default=600)
@@ -1429,18 +1426,18 @@ def main():
     args = p.parse_args()
 
     if args.workshop_mode and args.solo_mode:
-        print("FEHLER: --workshop-mode und --solo-mode schliessen sich aus")
+        print("ERROR: --workshop-mode and --solo-mode are mutually exclusive")
         sys.exit(1)
     if args.workshop_mode:
         args.parallel = 8
-        args.num_ctx = 131072  # = 16k pro Slot, ~4.3 GB KV-Cache
+        args.num_ctx = 131072  # = 16k per slot, ~4.3 GB KV cache
     if args.solo_mode:
         args.parallel = 2
-        args.num_ctx = 131072  # = 64k pro Slot, ~4.3 GB KV-Cache
+        args.num_ctx = 131072  # = 64k per slot, ~4.3 GB KV cache
 
     if not args.api_key:
-        print("FEHLER: VAST_API_KEY nicht gesetzt.")
-        print("Hole dir einen unter https://cloud.vast.ai/manage-keys/")
+        print("ERROR: VAST_API_KEY not set.")
+        print("Get one at https://cloud.vast.ai/manage-keys/")
         sys.exit(1)
 
     vast = VastAI(api_key=args.api_key)
