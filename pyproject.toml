@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpu-summon"
+dynamic = ["version"]
+description = "Rent a cloud GPU, serve a local LLM"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "dg1001"}]
+keywords = ["gpu", "llm", "vast-ai", "llama-cpp", "opencode"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "vastai>=1.0",
+    "requests>=2.31",
+]
+
+[project.scripts]
+gpu-summon = "gpu_summon.summon:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "gpu_summon.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["gpu_summon*"]

@@ -7,8 +7,10 @@
 
 ## What gpu-summon is
 
-A Python launcher (`summon.py`) that rents a vast.ai GPU and serves a local
-LLM on it. Two modes:
+A Python launcher (`gpu_summon/summon.py`, exposed as the `gpu-summon`
+console script) that rents a vast.ai GPU and serves a local LLM on it.
+A 6-line `summon.py` shim at the repo root preserves the old
+`python summon.py …` invocation. Two modes:
 
 - **Default** — runs `llama-server` directly in the rented container. opencode
   config gets written locally so the user's laptop talks to the rented LLM
@@ -36,7 +38,7 @@ Three structural limits we hit and you should treat as load-bearing:
 
 2. **Port 443 is essentially never free on the host.** Mapping `-p 443:443`
    gets us a random host port like `:50241` instead. All user-facing URLs in
-   summon.py + AGENTS.md include this random port; the VS Code Ports tab
+   gpu_summon/summon.py + AGENTS.md include this random port; the VS Code Ports tab
    strips it (VS Code parser limitation, not fixable from code-server).
    Don't try to "fix" the port-443 retry logic — we removed it on purpose
    because it never succeeds.
@@ -60,7 +62,7 @@ Next backend is **TensorDock**, not RunPod or Lambda. Reasons:
   case (Lambda is H100/A100 only, overkill).
 
 When you take this on, the right shape is a **provider abstraction layer**
-in `summon.py` — common CLI surface, pluggable backends. Current
+in `gpu_summon/summon.py` — common CLI surface, pluggable backends. Current
 `vastai`-direct calls in `find_best_offers`, `create_instance`,
 `wait_until_running`, `cmd_destroy` should live behind a `Provider` ABC.
 
@@ -84,7 +86,10 @@ in `summon.py` — common CLI surface, pluggable backends. Current
 ## Files of note
 
 ```
-summon.py                      The launcher. Mostly procedural, ~1300 lines.
+pyproject.toml                 Packaging: `pip install` + `gpu-summon` script.
+gpu_summon/__init__.py         Package marker; `__version__` lives here.
+gpu_summon/summon.py           The launcher. Mostly procedural, single module.
+summon.py                      6-line compat shim at repo root.
 codeserver/Dockerfile          Image: cuda + llama.cpp + caddy + code-server +
                                opencode + Python/Node dev tools + vim.
 codeserver/onstart.sh          Container entrypoint. Must run as set -e

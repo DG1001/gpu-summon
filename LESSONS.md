@@ -316,8 +316,8 @@ Typical sessions:
 
 **Cost hygiene:**
 
-- **Every run ends with `python summon.py --destroy ID`** — vast has no auto-stop on idle
-- `python summon.py --list` shows what's still running
+- **Every run ends with `gpu-summon --destroy ID`** — vast has no auto-stop on idle
+- `gpu-summon --list` shows what's still running
 - For broken hosts (port conflicts etc.): destroy and try a new offer. Lost setup time is cheaper than waiting on a dead host.
 
 ---
@@ -366,10 +366,10 @@ Note: `create_template` accepts `ssh=True, direct=True` (these are translated). 
 
 ```bash
 # Pin in env
-GPU_SUMMON_TEMPLATE_HASH=<hash> python summon.py --solo-mode
+GPU_SUMMON_TEMPLATE_HASH=<hash> gpu-summon --solo-mode
 
 # Or per-launch
-python summon.py --template-hash <hash> --solo-mode
+gpu-summon --template-hash <hash> --solo-mode
 ```
 
 The launcher will use the template's image + onstart, and inject `LLAMA_PARALLEL`, `LLAMA_CTX`, `LLAMA_MODEL`, `LLAMA_API_KEY` env so the same template handles all modes.

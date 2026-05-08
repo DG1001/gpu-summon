@@ -26,22 +26,22 @@ Cloud-Coding-LLMs sind teuer und dein Code ist deins. Fuer Sessions wo Daten lok
 ## Quick Start
 
 ```bash
-git clone https://github.com/<dein-user>/gpu-summon.git
-cd gpu-summon
-pip install vastai requests
+pip install git+https://github.com/dg1001/gpu-summon.git
 
 export VAST_API_KEY=...   # von https://cloud.vast.ai/manage-keys/
 
 # Solo-Coding: 64k Context pro User, secure-by-default
-python summon.py --solo-mode
+gpu-summon --solo-mode
 
 # In eine laufende Instanz reinschauen (Modell-Download-Fortschritt, Logs, ...)
-python summon.py --ssh <id>
+gpu-summon --ssh <id>
 
 # Wenn fertig
-python summon.py --list
-python summon.py --destroy <id>
+gpu-summon --list
+gpu-summon --destroy <id>
 ```
+
+> Am Repo selbst hacken? Stattdessen `git clone … && pip install -e .`. Der alte Aufruf `python summon.py …` funktioniert weiterhin (Compat-Shim).
 
 ### Innen in der Instanz (nach `--ssh`)
 
@@ -100,7 +100,7 @@ Der Launch druckt Endpoint + API-Key und schreibt `~/.config/opencode/opencode.j
 ## Voraussetzungen
 
 - Python ≥ 3.10
-- `vastai` SDK + `requests` (`pip install vastai requests`)
+- `pip install git+https://github.com/dg1001/gpu-summon.git` — zieht `vastai` + `requests` automatisch
 - Vast.ai-Account mit API-Key in `VAST_API_KEY` (aktueller GPU-Marketplace; siehe [Roadmap](#roadmap))
 - Fuer den Smoketest: `ssh-keygen` + `ssh` (Linux/macOS Standard)
 
@@ -131,10 +131,10 @@ Kosten: ~$0.013 pro fehlgeschlagenem Kandidaten. Worst Case (alle 5 fallen durch
 
 ```bash
 # Strikt — nur Hosts die echte ≥200 Mbps liefern
-python summon.py --solo-mode --min-inet-down 500 --min-real-mbps 200
+gpu-summon --solo-mode --min-inet-down 500 --min-real-mbps 200
 
 # Locker — 100 Mbps reichen
-python summon.py --solo-mode --min-real-mbps 100
+gpu-summon --solo-mode --min-real-mbps 100
 ```
 
 `--min-inet-down` filtert nach *beworbener* Bandbreite (kostenlos, kein Container); `--min-real-mbps` validiert die *echte* Bandbreite (Container wird erstellt, ggf. zerstoert + retry).
@@ -145,14 +145,14 @@ Defaultmaessig generiert der Launcher einen 32-char Bearer-Token und gibt ihn `l
 
 ```bash
 # Default: auto-generieren
-python summon.py --solo-mode
-# [auth]   Kein --llm-api-key angegeben - generiert: ZeFiOs...
+gpu-summon --solo-mode
+# [auth]   No --llm-api-key given - generated: ZeFiOs...
 
 # Festen Key wiederverwenden
-GPU_SUMMON_LLM_API_KEY=meinkey python summon.py --solo-mode
+GPU_SUMMON_LLM_API_KEY=meinkey gpu-summon --solo-mode
 
 # Bewusst offen (nur in vertrauenswuerdigen Netzen!)
-python summon.py --solo-mode --llm-api-key ''
+gpu-summon --solo-mode --llm-api-key ''
 ```
 
 Die opencode-Auth-Datei (`~/.local/share/opencode/auth.json`) wird mit dem gleichen Token geschrieben.
@@ -234,7 +234,7 @@ Environment Variables:
 Vast.ai-spezifisch. Eine funktionierende Konfiguration kann als Template erfasst und ueber Launches hinweg wiederverwendet werden:
 
 ```bash
-GPU_SUMMON_TEMPLATE_HASH=<hash> python summon.py --solo-mode
+GPU_SUMMON_TEMPLATE_HASH=<hash> gpu-summon --solo-mode
 ```
 
 Der Launcher nimmt Image + onstart aus dem Template und injected nur Mode-spezifische Env (`LLAMA_PARALLEL`, `LLAMA_CTX`, `LLAMA_MODEL`, `LLAMA_API_KEY`). Wie das Template angelegt wird steht in [LESSONS.md](LESSONS.md#vastai-templates).
@@ -265,14 +265,14 @@ export DUCKDNS_TOKEN=...
 export VAST_API_KEY=...
 
 # llama-server + code-server + Caddy auf einer gemieteten GPU
-python summon.py --with-codeserver --code-domain mybox --solo-mode
+gpu-summon --with-codeserver --code-domain mybox --solo-mode
 # → Browser-IDE:   https://code.mybox.duckdns.org   (Login: <pw wird gedruckt>)
 # → LLM-Endpoint:  https://llm.mybox.duckdns.org/v1   (Bearer: <key wird gedruckt>)
 # (Hinweis: vast.ai vergibt immer einen Random-Host-Port -- der Launcher
-#  druckt die finalen URLs mit ":<port>" Suffix beim FERTIG)
+#  druckt die finalen URLs mit ":<port>" Suffix beim DONE)
 
 # Aufraeumen (zerstoert Instanz UND raeumt den duckdns-A-Record auf)
-python summon.py --destroy <id> --duckdns-token $DUCKDNS_TOKEN
+gpu-summon --destroy <id> --duckdns-token $DUCKDNS_TOKEN
 ```
 
 Passen Token und Subdomain nicht zusammen (Tippfehler oder Subdomain nie registriert), liefert das erste DNS-Update `KO` zurueck und Caddys Cert-Anforderung scheitert — also erst die Subdomain bei duckdns anlegen, dann launchen.
@@ -298,9 +298,9 @@ Ursprünglich war Docker-in-Docker geplant fuer Per-Projekt-Workspace-Isolation,
 ## Roadmap
 
 - [ ] **TensorDock-Backend (naechstes Vorhaben)**. Deren KVM-VM-Modell gibt eine echte oeffentliche IP mit freiem Port 443 und erlaubt `--privileged`-Container — das loest zwei Pain-Points die wir auf vast.ai hatten: (1) den Random-Host-Port-Suffix den der VS-Code-Ports-Tab strippt, und (2) Docker-in-Docker, womit das urspruenglich geplante full-xaresaicoder Per-Projekt-Workspace-Modell als `--with-xares`-Modus neben `--with-codeserver` wieder moeglich wird.
-- [ ] Provider-Abstraktions-Layer in `summon.py` (vast/TensorDock/RunPod/Lambda als pluggable Backends mit gemeinsamem CLI)
+- [ ] Provider-Abstraktions-Layer (vast/TensorDock/RunPod/Lambda als pluggable Backends mit gemeinsamem CLI)
 - [ ] Optional vLLM / SGLang als Backends neben llama.cpp
-- [ ] Native CLI-Entry-Point (`gpu-summon` statt `python summon.py`)
+- [x] Native CLI-Entry-Point (`gpu-summon` Console-Script via `pip install`)
 - [x] Optionaler Reverse-Proxy mit TLS-Termination (`--with-codeserver` bringt Caddy + duckdns Wildcard-Cert mit)
 
 ## Contributing

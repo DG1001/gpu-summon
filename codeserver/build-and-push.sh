@@ -21,4 +21,4 @@ docker buildx build \
     .
 
 echo "[done] pushed $IMAGE:$TAG"
-echo "       use it via: python summon.py --with-codeserver --code-image $IMAGE:$TAG ..."
+echo "       use it via: gpu-summon --with-codeserver --code-image $IMAGE:$TAG ..."
